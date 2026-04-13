@@ -30,23 +30,164 @@ try:
 except ImportError:
     SCRIPT_OK = False
 
-# ── Estilos ───────────────────────────────────────────────────────────────
+# ── Estilos institucionales UST ───────────────────────────────────────────
 st.markdown("""
 <style>
-    .block-container { max-width: 780px; padding-top: 2rem; }
-    .stButton > button { font-weight: 600; }
-    .metric-card {
-        background: #f8f9fa; border-radius: 10px;
-        padding: 1rem 1.2rem; text-align: center;
+    /* ── Paleta UST ── */
+    /* Verde institucional : #006633  */
+    /* Verde claro pastel  : #E8F5EE  */
+    /* Verde medio         : #C8E6D4  */
+    /* Acento dorado       : #C8A951  */
+
+    /* ── Fondo general ── */
+    .stApp {
+        background-color: #F0F7F4;
     }
-    .metric-card .value { font-size: 2rem; font-weight: 700; }
-    .metric-card .label { font-size: 0.85rem; color: #666; margin-top: 2px; }
-    .tag-ok    { background:#d4edda; color:#155724; border-radius:4px;
-                 padding:2px 8px; font-size:0.82rem; }
-    .tag-error { background:#f8d7da; color:#721c24; border-radius:4px;
-                 padding:2px 8px; font-size:0.82rem; }
-    .tag-warn  { background:#fff3cd; color:#856404; border-radius:4px;
-                 padding:2px 8px; font-size:0.82rem; }
+
+    /* ── Contenedor principal ── */
+    .block-container {
+        max-width: 820px;
+        padding-top: 1.8rem;
+        background-color: #FFFFFF;
+        border-radius: 12px;
+        padding-left: 2.5rem;
+        padding-right: 2.5rem;
+        box-shadow: 0 2px 12px rgba(0,102,51,0.08);
+    }
+
+    /* ── Cabecera de la app ── */
+    .del-header {
+        background: linear-gradient(135deg, #006633 0%, #009450 100%);
+        color: #FFFFFF;
+        border-radius: 10px;
+        padding: 1.2rem 1.6rem 1rem;
+        margin-bottom: 1.2rem;
+    }
+    .del-header h2 {
+        color: #FFFFFF !important;
+        margin: 0 0 0.15rem 0;
+        font-size: 1.45rem;
+        font-weight: 700;
+        letter-spacing: 0.01em;
+    }
+    .del-header .sub {
+        color: #C8E6D4;
+        font-size: 0.82rem;
+        margin: 0;
+    }
+    .del-header .badge {
+        display: inline-block;
+        background: rgba(255,255,255,0.18);
+        border: 1px solid rgba(255,255,255,0.35);
+        border-radius: 20px;
+        padding: 1px 10px;
+        font-size: 0.72rem;
+        color: #FFFFFF;
+        margin-top: 0.5rem;
+    }
+
+    /* ── Tabs ── */
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 4px;
+        background-color: #E8F5EE;
+        border-radius: 8px;
+        padding: 4px;
+    }
+    .stTabs [data-baseweb="tab"] {
+        border-radius: 6px;
+        padding: 0.4rem 1rem;
+        font-weight: 500;
+        color: #004d26;
+        background-color: transparent;
+    }
+    .stTabs [aria-selected="true"] {
+        background-color: #006633 !important;
+        color: #FFFFFF !important;
+        font-weight: 600;
+    }
+
+    /* ── Botón primario ── */
+    .stButton > button[kind="primary"],
+    div[data-testid="stDownloadButton"] button[kind="primary"] {
+        background-color: #006633;
+        border: none;
+        color: #FFFFFF;
+        font-weight: 600;
+        border-radius: 8px;
+        transition: background-color 0.2s;
+    }
+    .stButton > button[kind="primary"]:hover,
+    div[data-testid="stDownloadButton"] button[kind="primary"]:hover {
+        background-color: #004d26;
+    }
+
+    /* ── Botones secundarios ── */
+    .stButton > button:not([kind="primary"]) {
+        border: 1.5px solid #006633;
+        color: #006633;
+        border-radius: 8px;
+        font-weight: 500;
+    }
+
+    /* ── Métricas ── */
+    div[data-testid="stMetric"] {
+        background-color: #F0F7F4;
+        border: 1px solid #C8E6D4;
+        border-radius: 10px;
+        padding: 0.7rem 1rem;
+    }
+    div[data-testid="stMetricLabel"] {
+        color: #004d26 !important;
+        font-weight: 600;
+        font-size: 0.78rem;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+    }
+    div[data-testid="stMetricValue"] {
+        color: #006633 !important;
+        font-weight: 700;
+    }
+
+    /* ── Expanders ── */
+    .streamlit-expanderHeader {
+        background-color: #F0F7F4;
+        border: 1px solid #C8E6D4;
+        border-radius: 8px;
+        color: #004d26;
+        font-weight: 500;
+    }
+
+    /* ── Dividers ── */
+    hr {
+        border-color: #C8E6D4 !important;
+    }
+
+    /* ── Info / success banners ── */
+    div[data-testid="stAlert"] {
+        border-radius: 8px;
+    }
+
+    /* ── File uploader ── */
+    div[data-testid="stFileUploader"] {
+        border: 1.5px dashed #009450;
+        border-radius: 10px;
+        padding: 0.5rem;
+        background-color: #F7FCF9;
+    }
+
+    /* ── Tags ── */
+    .tag-ok    { background:#C8E6D4; color:#004d26; border-radius:4px;
+                 padding:2px 9px; font-size:0.82rem; font-weight:500; }
+    .tag-error { background:#FDDCDC; color:#8B0000; border-radius:4px;
+                 padding:2px 9px; font-size:0.82rem; font-weight:500; }
+    .tag-warn  { background:#FFF3CD; color:#7A5700; border-radius:4px;
+                 padding:2px 9px; font-size:0.82rem; font-weight:500; }
+
+    /* ── Captions ── */
+    .stCaption { color: #4a7c5e; }
+
+    /* ── Checkbox ── */
+    .stCheckbox label { color: #004d26; font-weight: 500; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -123,9 +264,13 @@ def tag(texto: str, tipo: str) -> str:
 #  CABECERA
 # ═════════════════════════════════════════════════════════════════════════
 
-st.markdown("## 📋 Procesador de Planificaciones DEL")
-st.caption("Universidad Santo Tomás · Dirección de Educación a Distancia · 2026-1")
-st.divider()
+st.markdown("""
+<div class="del-header">
+  <h2>📋 Procesador de Planificaciones DEL</h2>
+  <p class="sub">Universidad Santo Tomás · Dirección de Educación a Distancia</p>
+  <span class="badge">Semestre 2026-1</span>
+</div>
+""", unsafe_allow_html=True)
 
 if not SCRIPT_OK:
     st.error("No se encontró `revisar_planificaciones.py` en la misma carpeta que esta app.")

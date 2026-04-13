@@ -1551,6 +1551,44 @@ _PAT_FRASE_NOMINAL = re.compile(
     re.IGNORECASE
 )
 
+# Líneas informales sin número que tampoco son título ni Propósito
+# Detecta: notas con "+", keywords sueltos, notas entre paréntesis
+_PAT_LINEA_INFORMAL = re.compile(
+    r'^(?!'                          # NO empieza con…
+    r'\d+\.'                         #   ítem numerado
+    r'|Propósito'                    #   "Propósito:"
+    r'|[A-ZÁÉÍÓÚ][a-záéíóúü]+'     #   palabra con mayúscula (título del momento)
+    r')',
+    re.IGNORECASE
+)
+
+# Verbos imperativos 2ª persona válidos para iniciar ítems
+_VERBOS_IMPERATIVO = {
+    'accede','activa','agrega','amplía','analiza','anota','aplica','argumenta',
+    'atiende','ayuda','busca','calcula','categoriza','clasifica','colabora',
+    'comenta','compara','comparte','completa','conecta','construye','consulta',
+    'contesta','contrasta','contribuye','coopera','corrige','crea','cuestiona',
+    'deduce','define','describe','desarrolla','destaca','diferencia','diseña',
+    'documenta','elabora','elabora','emplea','enumera','escribe','escucha',
+    'esquematiza','evalúa','examina','explica','explora','expone','familiarízate',
+    'formula','grafica','identifica','implementa','infiere','interpreta',
+    'investiga','justifica','lee','lista','localiza','mapea','marca','mide',
+    'nota','observa','optimiza','organiza','participa','planifica','practica',
+    'prepara','presenta','prioriza','profundiza','propone','publica','recibe',
+    'recuerda','redacta','reflexiona','registra','relaciona','repasa','responde',
+    'retoma','revisa','resume','selecciona','señala','sintetiza','sistematiza',
+    'socializa','soluciona','subraya','sube','tabula','toma','trabaja','ubica',
+    'usa','utiliza','valida','valora','verifica',
+}
+
+# Imperativas con acento incorrecto → forma correcta
+_ACENTOS_IMPERATIVO = {
+    'clasifíca': 'clasifica', 'identifíca': 'identifica',
+    'analíza':   'analiza',   'organíza':   'organiza',
+    'sintetíza': 'sintetiza', 'especifíca': 'especifica',
+    'calífca':   'califica',  'justifíca':  'justifica',
+}
+
 
 def corregir_lenguaje_actividades(ws, log):
     """
@@ -1586,9 +1624,22 @@ def corregir_lenguaje_actividades(ws, log):
             cambios_celda.append('espacio faltante tras punto numerado')
             texto_nuevo = t2
 
-        # ── 2. "la docente"/"el docente" → "el o la docente" ─────────────
-        t2 = re.sub(r'\bla docente\b', 'el o la docente', texto_nuevo, flags=re.IGNORECASE)
-        t2 = re.sub(r'\bel docente\b', 'el o la docente', t2, flags=re.IGNORECASE)
+        # ── 2a. "de/del el/la (o el/la)* docente" → "del o la docente" ─────
+        # Cubre: "de el docente", "de la docente", "de el o la docente",
+        #        "de el o el o la docente", "del o el o la docente", etc.
+        t2 = re.sub(
+            r'\bde(?:l)?\s+(?:el|la)(?:\s+o\s+(?:el|la))*\s+docente\b',
+            'del o la docente',
+            texto_nuevo, flags=re.IGNORECASE
+        )
+        if t2 != texto_nuevo:
+            cambios_celda.append('"de el o… docente" → "del o la docente"')
+            texto_nuevo = t2
+
+        # ── 2b. "el/la docente" sueltos (no precedidos por "o ") ──────────
+        # Lookbehind fijo: evita romper "el o la docente" ya corregido
+        t2 = re.sub(r'(?<!o )\bel docente\b', 'el o la docente', texto_nuevo, flags=re.IGNORECASE)
+        t2 = re.sub(r'(?<!o )la docente\b',   'el o la docente', t2,          flags=re.IGNORECASE)
         if t2 != texto_nuevo:
             cambios_celda.append('"la/el docente" → "el o la docente"')
             texto_nuevo = t2
@@ -1607,6 +1658,14 @@ def corregir_lenguaje_actividades(ws, log):
         if t2 != texto_nuevo:
             texto_nuevo = t2
 
+        # ── 3b. Imperativas con acento incorrecto (clasifíca → clasifica) ──
+        for mal, bien in _ACENTOS_IMPERATIVO.items():
+            patron_acento = re.compile(r'\b' + re.escape(mal) + r'\b', re.IGNORECASE)
+            t2 = patron_acento.sub(bien, texto_nuevo)
+            if t2 != texto_nuevo:
+                cambios_celda.append(f'acento incorrecto: "{mal}" → "{bien}"')
+                texto_nuevo = t2
+
         # ── Aplicar cambios si los hubo ───────────────────────────────────
         if texto_nuevo != texto:
             cell.value = texto_nuevo
@@ -1615,19 +1674,43 @@ def corregir_lenguaje_actividades(ws, log):
                 log.append(f'    [Plan F{r}] Lenguaje actividad: {c}')
             celdas_modificadas += 1
 
-        # ── 4. Advertencias para revisión manual ──────────────────────────
+        # ── 4. Advertencias por revisión manual ───────────────────────────
         for linea in texto_nuevo.split('\n'):
             linea = linea.strip()
+            if not linea:
+                continue
+
+            # a) Acción descrita como tarea del docente
             if _PAT_ACCION_DOCENTE.match(linea):
                 advertencias.append(
                     f'    [Plan F{r} {str(momento)[:12]}] ⚠️  Ítem describe acción del docente '
                     f'(reescribir como instrucción al estudiante): "{linea[:90]}"'
                 )
+
+            # b) Frase nominal sin verbo imperativo
             elif _PAT_FRASE_NOMINAL.match(linea):
                 advertencias.append(
-                    f'    [Plan F{r} {str(momento)[:12]}] ⚠️  Ítem como frase nominal sin verbo '
-                    f'(iniciar con verbo imperativo): "{linea[:90]}"'
+                    f'    [Plan F{r} {str(momento)[:12]}] ⚠️  Ítem nominal sin verbo '
+                    f'(iniciar con verbo imperativo: Revisa, Lee, Aplica…): "{linea[:90]}"'
                 )
+
+            # c) Línea con "+" como separador de actividades
+            elif '+' in linea and not linea.startswith('Propósito'):
+                advertencias.append(
+                    f'    [Plan F{r} {str(momento)[:12]}] ⚠️  Usa "+" como separador '
+                    f'(reemplazar por ítems numerados con verbo imperativo): "{linea[:90]}"'
+                )
+
+            # d) Línea no numerada y no título que no empieza con verbo imperativo
+            elif (linea and not re.match(r'^\d+\.', linea)
+                      and not linea.startswith('Propósito')
+                      and not re.match(r'^[A-ZÁÉÍÓÚ][a-záéíóúü ]+$', linea)):
+                primer_word = re.split(r'[\s,.]', linea)[0].lower().strip('¡!')
+                if primer_word and primer_word not in _VERBOS_IMPERATIVO:
+                    advertencias.append(
+                        f'    [Plan F{r} {str(momento)[:12]}] ⚠️  Línea no inicia con verbo '
+                        f'imperativo (Revisa, Lee, Aplica…): "{linea[:90]}"'
+                    )
 
     if advertencias:
         log.append('\n  [Advertencias de lenguaje — requieren revisión manual]')

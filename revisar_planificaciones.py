@@ -50,6 +50,7 @@ import os
 import re
 import glob
 import shutil
+import tempfile
 import openpyxl
 from openpyxl.styles import Font, PatternFill
 from datetime import datetime
@@ -576,6 +577,327 @@ def leer_observaciones_escala(escala_path):
         return []
 
 
+# ══════════════════════════════════════════════════════════════════════════
+#  INSTANCIA 2 — APLICAR CORRECCIONES DE ESCALA DEL
+# ══════════════════════════════════════════════════════════════════════════
+
+_OBS_IGNORAR = {
+    'si', 'parcialmente', 'no', 'observaciones',
+    'solicitud de mejora/ observaciones',
+    'comentarios de postgrado post-1° validación',
+    'comentarios de postgrado post-1Â° validaciÃ³n',
+    'comentarios 2° validación', 'comentarios 2Â° validaciÃ³n',
+    'ok', 'identificación', 'resultados', 'validación inicial',
+    'sanción validador(a) inicial',
+}
+
+_SECCIONES_ESCALA = (
+    'síntesis didáctica', 'planificación por unidades',
+    'estrategias metodológicas', 'estrategias evaluativas',
+    'carga académica',
+)
+
+
+def leer_escala_completa(escala_path):
+    """
+    Lee la escala de apreciación completa.
+    Devuelve lista de dicts:
+      { seccion, criterio, estado ('Si'|'Parcialmente'|'No'), obs_texto }
+    Solo incluye filas con marca de estado (X/x en col C, D o E).
+    """
+    if not escala_path:
+        return []
+    try:
+        wb_e = openpyxl.load_workbook(escala_path, data_only=True)
+        ws_e = wb_e.active
+    except Exception:
+        return []
+
+    criterios = []
+    seccion_actual = None
+
+    for row in ws_e.iter_rows(min_row=4, values_only=True):
+        criterio = row[0] if len(row) > 0 else None
+        si_val   = row[2] if len(row) > 2 else None   # col C — Sí
+        parc_val = row[3] if len(row) > 3 else None   # col D — Parcialmente
+        no_val   = row[4] if len(row) > 4 else None   # col E — No
+        obs_f    = row[5] if len(row) > 5 else None   # col F — Solicitud de Mejora
+        obs_i    = row[8] if len(row) > 8 else None   # col I — Post-1ª validación
+        obs_j    = row[9] if len(row) > 9 else None   # col J — 2ª validación
+
+        if not criterio:
+            continue
+        c_lower = str(criterio).lower().strip()
+
+        # Detectar encabezado de sección
+        for sec in _SECCIONES_ESCALA:
+            if c_lower.startswith(sec):
+                seccion_actual = str(criterio).strip()
+                break
+
+        # Saltar filas sin marca de estado
+        si_ok   = bool(si_val   and str(si_val).strip().upper()   == 'X')
+        parc_ok = bool(parc_val and str(parc_val).strip().upper() == 'X')
+        no_ok   = bool(no_val   and str(no_val).strip().upper()   == 'X')
+        if not (si_ok or parc_ok or no_ok):
+            continue
+
+        if c_lower in _OBS_IGNORAR:
+            continue
+
+        estado = 'No' if no_ok else ('Parcialmente' if parc_ok else 'Si')
+
+        # Construir texto de observación consolidado
+        partes = []
+        for o in (obs_f, obs_i, obs_j):
+            if o:
+                t = str(o).strip()
+                if t and t.lower() not in _OBS_IGNORAR:
+                    partes.append(t)
+        obs_texto = ' | '.join(partes) if partes else None
+
+        criterios.append({
+            'seccion':   seccion_actual,
+            'criterio':  str(criterio).strip(),
+            'estado':    estado,
+            'obs_texto': obs_texto,
+        })
+
+    return criterios
+
+
+def _col_para_criterio(criterio_texto):
+    """
+    Mapea el texto de un criterio a la(s) columna(s) relevantes de la planificación.
+    Devuelve lista de claves de COL (pueden ser varias).
+    """
+    t = str(criterio_texto).lower()
+    cols = []
+    if 'instrumento'                               in t: cols.append('INSTR')
+    if 'procedimiento'                             in t: cols.append('PROC')
+    if 'tipo de evaluación' in t or 'tipos de ev' in t: cols.append('TIPO')
+    if 'recurso'                                   in t: cols.append('RECURSOS')
+    if 'resultado' in t and 'aprendizaje'          in t: cols.append('RA')
+    if 'contenido'                                 in t: cols.append('CONTENIDOS')
+    if 'medio de entrega'                          in t: cols.append('MEDIO')
+    if 'porcentaje'                                in t: cols.append('PCT')
+    if 'individual' in t or 'grupal'               in t: cols.append('INDIV')
+    if ('redacción' in t or 'momentos' in t
+            or ('actividad' in t and 'estrategia' not in t)):
+                                                         cols.append('ACTIVIDAD')
+    return cols
+
+
+def _escribir_notas_i2(wb, fallidos):
+    """Escribe/reemplaza la hoja NOTAS_CORRECCIONES_DEL con el resumen de I2."""
+    HOJA = 'NOTAS_CORRECCIONES_DEL'
+    if HOJA in wb.sheetnames:
+        del wb[HOJA]
+    ws_n = wb.create_sheet(HOJA)
+
+    ws_n.cell(1, 1, 'OBSERVACIONES REVISORA DEL').font = Font(bold=True, size=12)
+    ws_n.cell(2, 1, 'Sección').font   = Font(bold=True)
+    ws_n.cell(2, 2, 'Criterio').font  = Font(bold=True)
+    ws_n.cell(2, 3, 'Estado').font    = Font(bold=True)
+    ws_n.cell(2, 4, 'Observación').font = Font(bold=True)
+
+    fill_no   = PatternFill(fill_type='solid', fgColor='F8D7DA')
+    fill_parc = PatternFill(fill_type='solid', fgColor='FFF3CD')
+
+    for i, item in enumerate(fallidos, start=3):
+        ws_n.cell(i, 1, item['seccion']  or '—')
+        ws_n.cell(i, 2, item['criterio'])
+        ws_n.cell(i, 3, item['estado'])
+        ws_n.cell(i, 4, item['obs_texto'] or '—')
+        fill = fill_no if item['estado'] == 'No' else fill_parc
+        for c in range(1, 5):
+            ws_n.cell(i, c).fill = fill
+
+    ws_n.column_dimensions['B'].width = 60
+    ws_n.column_dimensions['D'].width = 80
+
+
+def aplicar_obs_escala_i2(wb, criterios, log):
+    """
+    Para cada criterio ❌ o Parcialmente con texto de observación:
+    - Inyecta el texto en azul en las celdas vacías de la(s) columna(s) mapeadas.
+    - Escribe resumen en hoja NOTAS_CORRECCIONES_DEL.
+    Devuelve número de anotaciones aplicadas.
+    """
+    from openpyxl.cell.cell import MergedCell
+
+    ws_plan = wb['Planificación por unidades'] if 'Planificación por unidades' in wb.sheetnames else None
+    if not ws_plan:
+        return 0
+
+    fallidos = [c for c in criterios
+                if c['estado'] in ('No', 'Parcialmente') and c['obs_texto']]
+
+    if not fallidos:
+        log.append('  [I2] Sin observaciones de la revisora con texto.')
+        _escribir_notas_i2(wb, [])
+        return 0
+
+    log.append(f'\n  [Instancia 2 — Observaciones revisora DEL ({len(fallidos)} criterios)]')
+    total_anotaciones = 0
+
+    for item in fallidos:
+        criterio = item['criterio']
+        obs      = item['obs_texto']
+        estado   = item['estado']
+        cols     = _col_para_criterio(criterio)
+        icono    = '❌' if estado == 'No' else '⚠️'
+
+        log.append(f'  {icono} {criterio[:75]}')
+        if obs:
+            log.append(f'      → {obs[:140]}')
+
+        if not cols:
+            log.append('      [sin mapeo automático — ver hoja NOTAS_CORRECCIONES_DEL]')
+            continue
+
+        obs_corta = obs[:100] + ('…' if len(obs) > 100 else '')
+
+        for col_key in cols:
+            col_num = COL.get(col_key)
+            if not col_num:
+                continue
+
+            for row in ws_plan.iter_rows(min_row=4):
+                r = row[0].row
+                # Solo filas con actividad o evaluación (no filas vacías)
+                tiene_contenido = (ws_plan.cell(r, COL['ACTIVIDAD']).value
+                                   or ws_plan.cell(r, COL['TIPO']).value)
+                if not tiene_contenido:
+                    continue
+
+                target = ws_plan.cell(r, col_num)
+                if isinstance(target, MergedCell):
+                    continue
+
+                if not target.value:
+                    target.value = f'[DEL: {obs_corta}]'
+                    aplicar_azul(target)
+                    total_anotaciones += 1
+
+    _escribir_notas_i2(wb, fallidos)
+    log.append(f'  Anotaciones inyectadas: {total_anotaciones}  '
+               f'| Resumen completo en hoja NOTAS_CORRECCIONES_DEL')
+    return total_anotaciones
+
+
+def procesar_instancia2(plan_bytes, escala_bytes,
+                        plan_nombre='planificacion.xlsx',
+                        programa=None, es_as=False,
+                        instancia_num=2):
+    """
+    Flujo Instancia 2 / 3: aplica correcciones automáticas + observaciones de la
+    revisora DEL (escala completada) sobre la planificación del docente.
+
+    Parámetros
+    ----------
+    plan_bytes    : bytes del .xlsx del docente
+    escala_bytes  : bytes de la escala completada por la revisora
+    plan_nombre   : nombre original del archivo (para el nombre de salida)
+    programa      : dict extraído por extraer_programa_pdf (opcional)
+    es_as         : bool — activa verificación hitos A+Se
+    instancia_num : 2 ó 3 — controla encabezado y nombre del archivo de salida
+
+    Devuelve
+    --------
+    (log: list[str], ok: bool, output_bytes: bytes, output_nombre: str)
+    """
+    from io import BytesIO
+
+    log = [
+        f'\n{"═"*70}',
+        f'  INSTANCIA {instancia_num} — Aplicar correcciones de escala DEL',
+        f'{"═"*70}',
+        f'  Plan   : {plan_nombre}',
+    ]
+
+    # ── Leer escala ────────────────────────────────────────────────────────
+    try:
+        with tempfile.NamedTemporaryFile(suffix='.xlsx', delete=False) as tmp_e:
+            tmp_e.write(escala_bytes)
+            tmp_escala = tmp_e.name
+        criterios = leer_escala_completa(tmp_escala)
+        os.unlink(tmp_escala)
+    except Exception as exc:
+        log.append(f'  ❌ Error leyendo escala: {exc}')
+        return log, False, b'', ''
+
+    n_total   = len(criterios)
+    n_fallidos = sum(1 for c in criterios if c['estado'] in ('No', 'Parcialmente'))
+    n_ok       = n_total - n_fallidos
+    log.append(f'  Escala  : {n_total} criterios leídos | '
+               f'{n_ok} ✅ | {n_fallidos} con observaciones')
+
+    # ── Cargar planificación ───────────────────────────────────────────────
+    try:
+        wb = openpyxl.load_workbook(BytesIO(plan_bytes))
+    except Exception as exc:
+        log.append(f'  ❌ Error cargando planificación: {exc}')
+        return log, False, b'', ''
+
+    hojas = wb.sheetnames
+    log.append(f'  Hojas   : {hojas}')
+
+    # ── Correcciones automáticas (misma lógica I1) ─────────────────────────
+    total_sint = 0
+    if 'Síntesis didáctica' in hojas:
+        log.append('\n  [Síntesis didáctica — correcciones automáticas]')
+        total_sint = corregir_sintesis(wb['Síntesis didáctica'], log)
+        if total_sint == 0:
+            log.append('    Sin cambios necesarios.')
+
+    total_plan = 0
+    if 'Planificación por unidades' in hojas:
+        log.append('\n  [Planificación por unidades — correcciones automáticas]')
+        a, mj, mm, b = corregir_planificacion(wb['Planificación por unidades'], log)
+        total_leng   = corregir_lenguaje_actividades(
+            wb['Planificación por unidades'], log)
+        total_plan   = a + mj + mm + b + total_leng
+        if total_plan == 0:
+            log.append('    Sin cambios necesarios.')
+
+    # ── Observaciones de la revisora ───────────────────────────────────────
+    n_obs = aplicar_obs_escala_i2(wb, criterios, log)
+
+    # ── Colores de fila (Formativa/Sumativa) ──────────────────────────────
+    if 'Planificación por unidades' in hojas:
+        aplicar_colores_evaluacion(wb['Planificación por unidades'])
+
+    # ── Verificación 41 criterios ──────────────────────────────────────────
+    resultados_escala = verificar_escala(wb)
+    log.extend(formatear_verificacion(resultados_escala, 'archivo'))
+
+    # ── Verificación vs programa ───────────────────────────────────────────
+    verificar_contra_programa(wb, programa, log)
+
+    # ── Verificación A+Se ──────────────────────────────────────────────────
+    if es_as and 'Planificación por unidades' in hojas:
+        verificar_as(wb['Planificación por unidades'], log)
+
+    # ── Guardar ────────────────────────────────────────────────────────────
+    total = total_sint + total_plan + n_obs
+    log.append(f'\n  RESUMEN I2:')
+    log.append(f'    Auto-correcciones I1     : {total_sint + total_plan}')
+    log.append(f'    Anotaciones revisora DEL : {n_obs}')
+    log.append(f'    TOTAL                    : {total}')
+    log.append(f'    🔵 Texto azul = corrección automática o anotación revisora')
+    log.append(f'    📋 Hoja NOTAS_CORRECCIONES_DEL = resumen completo de observaciones')
+
+    buf = BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    output_bytes = buf.read()
+
+    output_nombre = nombre_instancia(plan_nombre, instancia_num)
+
+    return log, True, output_bytes, output_nombre
+
+
 def verificar_escala(wb):
     """
     Verifica automáticamente los criterios marcados como 'auto' en ESCALA_ESTANDAR
@@ -980,15 +1302,33 @@ def formatear_verificacion(resultados, fuente_escala):
     return lineas
 
 
+def _base_limpia(nombre):
+    """
+    Elimina todos los sufijos de instancia del nombre de archivo (iterativo).
+    Quita cualquier combinación de: _I1, _I2, _I3, _REVISADO, _FINAL.
+    """
+    base, ext = os.path.splitext(nombre)
+    patron = re.compile(r'(_I[123]|_REVISADO|_FINAL)+$', re.IGNORECASE)
+    prev = None
+    while prev != base:
+        prev = base
+        base = patron.sub('', base)
+    return base, ext
+
+
+def nombre_instancia(nombre_original, n):
+    """
+    Genera nombre limpio con sufijo _I1 / _I2 / _I3.
+    Elimina cualquier sufijo de instancia previo antes de añadir el nuevo.
+    Ejemplo: 'plan_I1_REVISADO_I2.xlsx' → 'plan_I3.xlsx'
+    """
+    base, ext = _base_limpia(nombre_original)
+    return f'{base}_I{n}{ext}'
+
+
 def nombre_revisado(nombre_original):
-    """
-    Genera el nombre del archivo de salida para planificaciones originales.
-    Añade _REVISADO antes de la extensión si no lo tiene ya.
-    """
-    base, ext = os.path.splitext(nombre_original)
-    if '_REVISADO' not in base and '_FINAL' not in base.upper():
-        return f'{base}_REVISADO{ext}'
-    return nombre_original
+    """Alias de compatibilidad — genera nombre _I1."""
+    return nombre_instancia(nombre_original, 1)
 
 
 def solo_sumativa(texto):

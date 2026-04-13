@@ -1,0 +1,28 @@
+# Planificaciones y datos de asignaturas (no subir al repo)
+*.xlsx
+*.xls
+*.docx
+*.doc
+*.pdf
+
+# Reportes generados
+reporte_*.txt
+
+# Carpetas de asignaturas
+PLA-*/
+*/Enviado a DEL/
+*/Correcciones/
+*/Revisado/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.env
+
+# macOS
+.DS_Store
+
+# Notebooks anteriores (se mantiene solo el actual)
+Revisar_Planificacion_UST.ipynb
+Procesar_DEL_Drive.ipynb

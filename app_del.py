@@ -39,163 +39,205 @@ except ImportError:
 # ── Estilos institucionales UST ───────────────────────────────────────────
 st.markdown("""
 <style>
-    /* ── Paleta UST ── */
-    /* Verde institucional : #006633  */
-    /* Verde claro pastel  : #E8F5EE  */
-    /* Verde medio         : #C8E6D4  */
-    /* Acento dorado       : #C8A951  */
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
 
-    /* ── Fondo general ── */
-    .stApp {
-        background-color: #F0F7F4;
+    /* ── Variables ── */
+    :root {
+        --ust-green:      #006633;
+        --ust-green-dark: #004d26;
+        --ust-green-mid:  #009450;
+        --ust-green-pale: #E8F5EE;
+        --ust-green-mist: #F0F7F4;
+        --ust-gold:       #C8A951;
+        --ust-border:     #C8E6D4;
+        --radius:         12px;
+        --shadow:         0 4px 20px rgba(0,102,51,0.10);
     }
+
+    /* ── Tipografía global ── */
+    html, body, [class*="css"] {
+        font-family: 'Inter', sans-serif !important;
+    }
+
+    /* ── Fondo ── */
+    .stApp { background: linear-gradient(160deg,#EEF7F1 0%,#F5FAF7 100%); }
 
     /* ── Contenedor principal ── */
     .block-container {
-        max-width: 820px;
-        padding-top: 1.8rem;
-        background-color: #FFFFFF;
-        border-radius: 12px;
-        padding-left: 2.5rem;
-        padding-right: 2.5rem;
-        box-shadow: 0 2px 12px rgba(0,102,51,0.08);
+        max-width: 860px;
+        padding-top: 1.4rem;
+        padding-left: 2.8rem;
+        padding-right: 2.8rem;
+        background: #FFFFFF;
+        border-radius: var(--radius);
+        box-shadow: var(--shadow);
     }
 
-    /* ── Cabecera de la app ── */
+    /* ── Cabecera ── */
     .del-header {
-        background: linear-gradient(135deg, #006633 0%, #009450 100%);
-        color: #FFFFFF;
-        border-radius: 10px;
-        padding: 1.2rem 1.6rem 1rem;
-        margin-bottom: 1.2rem;
+        background: linear-gradient(135deg, #004d26 0%, #006633 45%, #00a859 100%);
+        border-radius: 14px;
+        padding: 1.4rem 2rem 1.2rem;
+        margin-bottom: 1.4rem;
+        position: relative;
+        overflow: hidden;
+    }
+    .del-header::before {
+        content: '';
+        position: absolute; inset: 0;
+        background: url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%23ffffff' fill-opacity='0.04'%3E%3Ccircle cx='30' cy='30' r='28'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E") repeat;
+        pointer-events: none;
     }
     .del-header h2 {
         color: #FFFFFF !important;
-        margin: 0 0 0.15rem 0;
-        font-size: 1.45rem;
+        margin: 0 0 0.2rem 0;
+        font-size: 1.55rem;
         font-weight: 700;
-        letter-spacing: 0.01em;
+        letter-spacing: -0.01em;
+        text-shadow: 0 1px 3px rgba(0,0,0,0.2);
     }
     .del-header .sub {
-        color: #C8E6D4;
-        font-size: 0.82rem;
-        margin: 0;
+        color: rgba(255,255,255,0.80);
+        font-size: 0.84rem;
+        margin: 0 0 0.6rem 0;
+        font-weight: 400;
     }
     .del-header .badge {
         display: inline-block;
-        background: rgba(255,255,255,0.18);
-        border: 1px solid rgba(255,255,255,0.35);
+        background: rgba(255,255,255,0.15);
+        border: 1px solid rgba(255,255,255,0.30);
         border-radius: 20px;
-        padding: 1px 10px;
-        font-size: 0.72rem;
+        padding: 3px 12px;
+        font-size: 0.74rem;
+        font-weight: 600;
         color: #FFFFFF;
-        margin-top: 0.5rem;
+        letter-spacing: 0.03em;
+        backdrop-filter: blur(4px);
     }
 
     /* ── Tabs ── */
     .stTabs [data-baseweb="tab-list"] {
-        gap: 4px;
-        background-color: #E8F5EE;
-        border-radius: 8px;
+        gap: 3px;
+        background: var(--ust-green-pale);
+        border-radius: 10px;
         padding: 4px;
+        border: 1px solid var(--ust-border);
     }
     .stTabs [data-baseweb="tab"] {
-        border-radius: 6px;
-        padding: 0.4rem 1rem;
+        border-radius: 8px;
+        padding: 0.45rem 1.1rem;
         font-weight: 500;
-        color: #004d26;
-        background-color: transparent;
+        font-size: 0.84rem;
+        color: var(--ust-green-dark);
+        transition: all 0.18s ease;
     }
     .stTabs [aria-selected="true"] {
-        background-color: #006633 !important;
+        background: var(--ust-green) !important;
         color: #FFFFFF !important;
         font-weight: 600;
+        box-shadow: 0 2px 8px rgba(0,102,51,0.25);
     }
 
-    /* ── Botón primario ── */
-    .stButton > button[kind="primary"],
-    div[data-testid="stDownloadButton"] button[kind="primary"] {
-        background-color: #006633;
-        border: none;
-        color: #FFFFFF;
-        font-weight: 600;
-        border-radius: 8px;
-        transition: background-color 0.2s;
-    }
-    .stButton > button[kind="primary"]:hover,
-    div[data-testid="stDownloadButton"] button[kind="primary"]:hover {
-        background-color: #004d26;
-    }
-
-    /* ── Botones secundarios ── */
-    .stButton > button:not([kind="primary"]) {
-        border: 1.5px solid #006633;
-        color: #006633;
-        border-radius: 8px;
-        font-weight: 500;
+    /* ── Botones primarios (base) ── */
+    button[data-testid="baseButton-primary"] {
+        border-radius: 9px !important;
+        font-weight: 600 !important;
+        letter-spacing: 0.01em !important;
+        transition: all 0.18s ease !important;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.12) !important;
     }
 
     /* ── Métricas ── */
     div[data-testid="stMetric"] {
-        background-color: #F0F7F4;
-        border: 1px solid #C8E6D4;
-        border-radius: 10px;
-        padding: 0.7rem 1rem;
+        background: linear-gradient(135deg,#F7FCF9,#EEF7F1);
+        border: 1px solid var(--ust-border);
+        border-radius: 12px;
+        padding: 0.9rem 1.1rem;
+        box-shadow: 0 1px 4px rgba(0,102,51,0.06);
     }
     div[data-testid="stMetricLabel"] {
-        color: #004d26 !important;
+        color: var(--ust-green-dark) !important;
         font-weight: 600;
-        font-size: 0.78rem;
+        font-size: 0.76rem;
         text-transform: uppercase;
-        letter-spacing: 0.04em;
+        letter-spacing: 0.05em;
     }
     div[data-testid="stMetricValue"] {
-        color: #006633 !important;
+        color: var(--ust-green) !important;
         font-weight: 700;
+        font-size: 1.8rem !important;
+    }
+    div[data-testid="stMetricDelta"] {
+        font-size: 0.78rem !important;
     }
 
     /* ── Expanders ── */
-    .streamlit-expanderHeader {
-        background-color: #F0F7F4;
-        border: 1px solid #C8E6D4;
-        border-radius: 8px;
-        color: #004d26;
+    div[data-testid="stExpander"] {
+        border: 1px solid var(--ust-border) !important;
+        border-radius: 10px !important;
+        overflow: hidden;
+    }
+    div[data-testid="stExpander"] summary {
+        background: var(--ust-green-mist);
+        color: var(--ust-green-dark);
         font-weight: 500;
+        padding: 0.6rem 1rem;
+    }
+    div[data-testid="stExpander"] summary:hover {
+        background: var(--ust-green-pale);
     }
 
     /* ── Dividers ── */
-    hr {
-        border-color: #C8E6D4 !important;
-    }
+    hr { border-color: var(--ust-border) !important; opacity: 0.7; }
 
-    /* ── Info / success banners ── */
+    /* ── Alertas ── */
     div[data-testid="stAlert"] {
-        border-radius: 8px;
+        border-radius: 10px !important;
+        border-left-width: 4px !important;
     }
 
     /* ── File uploader ── */
     div[data-testid="stFileUploader"] {
-        border: 1.5px dashed #009450;
-        border-radius: 10px;
-        padding: 0.5rem;
-        background-color: #F7FCF9;
+        border: 2px dashed var(--ust-green-mid);
+        border-radius: 12px;
+        padding: 0.6rem;
+        background: #F7FCF9;
+        transition: border-color 0.2s;
+    }
+    div[data-testid="stFileUploader"]:hover {
+        border-color: var(--ust-green);
+        background: var(--ust-green-pale);
     }
 
+    /* ── Progress bar ── */
+    div[data-testid="stProgressBar"] > div > div {
+        background: linear-gradient(90deg, var(--ust-green), var(--ust-green-mid)) !important;
+        border-radius: 99px !important;
+    }
+
+    /* ── Dataframe ── */
+    div[data-testid="stDataFrame"] { border-radius: 10px; overflow: hidden; }
+
     /* ── Tags ── */
-    .tag-ok    { background:#C8E6D4; color:#004d26; border-radius:4px;
-                 padding:2px 9px; font-size:0.82rem; font-weight:500; }
-    .tag-error { background:#FDDCDC; color:#8B0000; border-radius:4px;
-                 padding:2px 9px; font-size:0.82rem; font-weight:500; }
-    .tag-warn  { background:#FFF3CD; color:#7A5700; border-radius:4px;
-                 padding:2px 9px; font-size:0.82rem; font-weight:500; }
+    .tag-ok    { background:#C8E6D4; color:#004d26; border-radius:5px;
+                 padding:2px 10px; font-size:0.81rem; font-weight:600; }
+    .tag-error { background:#FDDCDC; color:#8B0000; border-radius:5px;
+                 padding:2px 10px; font-size:0.81rem; font-weight:600; }
+    .tag-warn  { background:#FFF3CD; color:#7A5700; border-radius:5px;
+                 padding:2px 10px; font-size:0.81rem; font-weight:600; }
 
-    /* ── Captions ── */
-    .stCaption { color: #4a7c5e; }
+    /* ── Captions y checkboxes ── */
+    .stCaption { color: #4a7c5e; font-size: 0.82rem; }
+    .stCheckbox label { color: var(--ust-green-dark); font-weight: 500; }
 
-    /* ── Checkbox ── */
-    .stCheckbox label { color: #004d26; font-weight: 500; }
+    /* ── Selectbox / inputs ── */
+    div[data-baseweb="select"] > div,
+    div[data-baseweb="input"] > div {
+        border-radius: 8px !important;
+        border-color: var(--ust-border) !important;
+    }
 
-    /* colores de botones: aplicados via JS (components.html) */
+    /* colores de botones por instancia: aplicados via JS (components.html) */
 </style>
 """, unsafe_allow_html=True)
 
@@ -336,12 +378,16 @@ from datetime import datetime
 _ahora = datetime.now().strftime("%d/%m/%Y  %H:%M")
 
 st.markdown(f"""
-<div style="position:fixed; top:14px; right:24px; z-index:9999;
-            background:rgba(0,102,51,0.12); border:1px solid rgba(0,102,51,0.25);
-            border-radius:10px; padding:6px 16px; text-align:right; line-height:1.2;">
-  <span style="font-size:1.35rem; font-weight:700; color:#004d26; letter-spacing:0.02em;">
-    🕐 {_ahora}
-  </span>
+<div style="position:fixed;top:12px;right:20px;z-index:9999;
+            background:rgba(255,255,255,0.92);backdrop-filter:blur(8px);
+            border:1.5px solid #C8E6D4;border-radius:12px;
+            padding:7px 18px;box-shadow:0 2px 12px rgba(0,102,51,0.13);">
+  <div style="font-size:0.68rem;font-weight:600;color:#009450;
+              letter-spacing:0.08em;text-transform:uppercase;line-height:1;">EN VIVO</div>
+  <div style="font-size:1.45rem;font-weight:700;color:#004d26;
+              letter-spacing:-0.01em;line-height:1.2;margin-top:1px;">
+    {_ahora}
+  </div>
 </div>
 <div class="del-header">
   <h2>📋 Procesador de Planificaciones DEL</h2>

@@ -206,6 +206,11 @@ def parsear_log(log: list[str]) -> dict:
         "correcciones_detalle": [],
         "discrepancias_detalle": [],
         "as_detalle": [],
+        "lt_errores": 0,
+        "lt_revisadas": 0,
+        "lt_correcciones": 0,
+        "lt_detalle": [],
+        "lt_ejecutado": False,
     }
     seccion = None
     for linea in log:
@@ -235,6 +240,14 @@ def parsear_log(log: list[str]) -> dict:
             resultado["as_error"]  = int(m.group(2))
             resultado["as_manual"] = int(m.group(3))
 
+        # LanguageTool — resumen (nuevo formato con correcciones)
+        m = re.search(r"LanguageTool:\s*(\d+)\s*celda\(s\)\s*revisadas?,\s*(\d+)\s*error\(es?\)(?:,\s*(\d+)\s*correcci.+?\s*aplicada\(s\))?", linea)
+        if m:
+            resultado["lt_revisadas"] = int(m.group(1))
+            resultado["lt_errores"]   = int(m.group(2))
+            resultado["lt_correcciones"] = int(m.group(3)) if m.group(3) else 0
+            resultado["lt_ejecutado"] = True
+
         # Sección actual para detalles
         if "[Planificación por unidades]" in linea or "[Síntesis didáctica]" in linea:
             seccion = "correcciones"
@@ -242,6 +255,8 @@ def parsear_log(log: list[str]) -> dict:
             seccion = "programa"
         elif "[Verificación A+Se" in linea:
             seccion = "as"
+        elif "LanguageTool es" in linea or "autocorrección" in linea:
+            seccion = "lt"
 
         # Líneas de detalle
         stripped = linea.strip()
@@ -251,6 +266,8 @@ def parsear_log(log: list[str]) -> dict:
             resultado["discrepancias_detalle"].append(stripped)
         elif seccion == "as" and stripped and stripped[0] in ("✅", "❌", "⚠"):
             resultado["as_detalle"].append(stripped)
+        elif seccion == "lt" and stripped and stripped[0] in ("✅", "⚠", "ℹ"):
+            resultado["lt_detalle"].append(stripped)
 
     return resultado
 
@@ -362,6 +379,24 @@ with tab_i1:
                  "campos del programa oficial.",
         )
 
+    usar_lt_i1 = st.checkbox(
+        "🔤 Revisión ortográfica y gramatical (LanguageTool)",
+        value=True,
+        key="i1_lt",
+        help="Revisa ortografía y gramática de las celdas de actividad "
+             "usando la API gratuita de LanguageTool en español. "
+             "Requiere conexión a internet. Aumenta el tiempo de procesamiento.",
+    )
+
+    autocorregir_lt_i1 = st.checkbox(
+        "✍️ Aplicar correcciones automáticas (conservador)",
+        value=False,
+        key="i1_autocorr",
+        help="Aplica automáticamente las correcciones SEGURAS detectadas por LanguageTool "
+             "(solo cambios unívocos: tildes faltantes, errores ortográficos claros). "
+             "Los cambios se marcan en azul en el archivo descargado.",
+    )
+
     st.markdown("### 3 · Revisar")
 
     listo_i1 = bool(pdf_file and xlsx_file)
@@ -383,7 +418,12 @@ with tab_i1:
         log          = []
         ok           = False
 
-        with st.spinner("Procesando planificación..."):
+        rp._LANGUAGETOOL_ACTIVO = usar_lt_i1
+        rp._LANGUAGETOOL_AUTOCORREGIR = autocorregir_lt_i1
+
+        spinner_msg = ("Procesando planificación + revisión ortográfica (puede tardar)..."
+                       if usar_lt_i1 else "Procesando planificación...")
+        with st.spinner(spinner_msg):
             with tempfile.TemporaryDirectory() as tmp:
                 carpeta_asig = os.path.join(tmp, "asig")
                 carpeta_env  = os.path.join(carpeta_asig, "Enviado a DEL")
@@ -453,6 +493,28 @@ with tab_i1:
                     text=f"{metricas['as_ok']}✅  {metricas['as_error']}❌  "
                          f"{metricas['as_manual']}⚠️ manual  (de {total_as} hitos)",
                 )
+
+            if metricas["lt_ejecutado"]:
+                lt_err = metricas["lt_errores"]
+                lt_rev = metricas["lt_revisadas"]
+                lt_corr = metricas["lt_correcciones"]
+                delta_text = f"{lt_rev} celda(s) revisadas"
+                if lt_corr > 0:
+                    delta_text += f", {lt_corr} corregidas"
+                st.metric(
+                    "Errores ortográficos/gramaticales",
+                    lt_err,
+                    delta=delta_text,
+                    delta_color="off" if lt_corr == 0 else "normal",
+                    help="LanguageTool API (es). Las correcciones automáticas se aplican solo a cambios seguros.",
+                )
+                if metricas["lt_detalle"]:
+                    with st.expander(
+                        f"🔤 Detalle ortografía/gramática ({lt_err} error(es), {lt_corr} corregidos)",
+                        expanded=lt_err > 0 or lt_corr > 0,
+                    ):
+                        for linea in metricas["lt_detalle"]:
+                            st.markdown(linea)
 
             if metricas["discrepancias_detalle"]:
                 with st.expander("📊 Detalle — verificación contra programa", expanded=True):
@@ -570,6 +632,22 @@ def _render_instancia_escala(tab, instancia_num, key_prefix):
                 help="PDF del programa para cruzar correcciones.",
             )
 
+        usar_lt_x = st.checkbox(
+            "🔤 Revisión ortográfica y gramatical (LanguageTool)",
+            value=True,
+            key=f"{key_prefix}_lt",
+            help="Revisa ortografía y gramática de las actividades usando "
+                 "LanguageTool API en español. Requiere conexión a internet.",
+        )
+
+        autocorregir_lt_x = st.checkbox(
+            "✍️ Aplicar correcciones automáticas (conservador)",
+            value=False,
+            key=f"{key_prefix}_autocorr",
+            help="Aplica automáticamente las correcciones SEGURAS detectadas por LanguageTool "
+                 "(solo cambios unívocos: tildes faltantes, errores ortográficos claros).",
+        )
+
         programa_x = {}
         if pdf_x:
             with st.spinner("Leyendo programa..."):
@@ -598,7 +676,12 @@ def _render_instancia_escala(tab, instancia_num, key_prefix):
             st.caption("⬆ Sube la escala completada y la planificación para continuar.")
 
         if procesar_x and listo_x:
-            with st.spinner(f"Aplicando correcciones Instancia {instancia_num}..."):
+            rp._LANGUAGETOOL_ACTIVO = usar_lt_x
+            rp._LANGUAGETOOL_AUTOCORREGIR = autocorregir_lt_x
+            spinner_x = (f"Aplicando correcciones Instancia {instancia_num} + revisión ortográfica..."
+                         if usar_lt_x else
+                         f"Aplicando correcciones Instancia {instancia_num}...")
+            with st.spinner(spinner_x):
                 log_x, ok_x, out_bytes_x, out_name_x = rp.procesar_instancia2(
                     plan_bytes=plan_f.getvalue(),
                     escala_bytes=escala_f.getvalue(),
@@ -649,6 +732,28 @@ def _render_instancia_escala(tab, instancia_num, key_prefix):
                               if metricas_x["criterios_error"] else "sin errores",
                         delta_color="inverse" if metricas_x["criterios_error"] else "normal",
                     )
+
+                if metricas_x["lt_ejecutado"]:
+                    lt_err_x = metricas_x["lt_errores"]
+                    lt_rev_x = metricas_x["lt_revisadas"]
+                    lt_corr_x = metricas_x["lt_correcciones"]
+                    delta_text_x = f"{lt_rev_x} celda(s) revisadas"
+                    if lt_corr_x > 0:
+                        delta_text_x += f", {lt_corr_x} corregidas"
+                    st.metric(
+                        "Errores ortográficos/gramaticales",
+                        lt_err_x,
+                        delta=delta_text_x,
+                        delta_color="off" if lt_corr_x == 0 else "normal",
+                        help="LanguageTool API (es). Las correcciones automáticas se aplican solo a cambios seguros.",
+                    )
+                    if metricas_x["lt_detalle"]:
+                        with st.expander(
+                            f"🔤 Detalle ortografía/gramática ({lt_err_x} error(es), {lt_corr_x} corregidos)",
+                            expanded=lt_err_x > 0 or lt_corr_x > 0,
+                        ):
+                            for linea in metricas_x["lt_detalle"]:
+                                st.markdown(linea)
 
                 if metricas_x["discrepancias_detalle"]:
                     with st.expander("📊 Verificación contra programa", expanded=True):

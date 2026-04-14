@@ -56,6 +56,13 @@ from openpyxl.styles import Font, PatternFill, Alignment
 from openpyxl.utils import get_column_letter
 from datetime import datetime
 from collections import Counter
+import urllib.request
+import urllib.parse
+import json
+import time
+
+# Flag global — se desactiva con --no-languagetool
+_LANGUAGETOOL_ACTIVO = True
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -954,6 +961,13 @@ def procesar_instancia2(plan_bytes, escala_bytes,
     # ── Verificación de momentos (Manual Diseño Instruccional UST) ──────────
     if 'Planificación por unidades' in hojas:
         verificar_momentos(wb['Planificación por unidades'], log)
+
+    # ── Revisión ortográfica/gramatical con LanguageTool ─────────────────
+    if 'Planificación por unidades' in hojas and _LANGUAGETOOL_ACTIVO:
+        verificar_lenguaje_momentos(
+            wb['Planificación por unidades'], log,
+            autocorregir=_LANGUAGETOOL_AUTOCORREGIR
+        )
 
     # ── Verificación de horas ─────────────────────────────────────────────
     _ws_sint = wb['Síntesis didáctica'] if 'Síntesis didáctica' in hojas else None
@@ -2618,6 +2632,292 @@ def verificar_momentos(ws_plan, log):
 
 
 # ══════════════════════════════════════════════════════════════════════════
+#  REVISIÓN ORTOGRÁFICA Y GRAMATICAL — LanguageTool API (gratuita, es)
+# ══════════════════════════════════════════════════════════════════════════
+
+_LT_URL     = 'https://api.languagetool.org/v2/check'
+_LT_LANG    = 'es'
+# Reglas que generan demasiado ruido en textos educativos estructurados
+_LT_DISABLE = ','.join([
+    'WHITESPACE_RULE',
+    'UPPERCASE_SENTENCE_START',
+    'ES_QUESTION_MARK',             # signos de interrogación invertidos
+    'COMMA_PARENTHESIS_WHITESPACE',
+    'DOUBLE_PUNCTUATION',
+])
+_LT_MIN_CHARS   = 30    # ignorar celdas muy cortas
+_LT_PAUSA_SEG   = 3.5   # pausa entre llamadas (free tier ~20 req/min)
+
+# Flag global para activar autocorrección conservadora
+_LANGUAGETOOL_AUTOCORREGIR = False
+
+# Reglas de LanguageTool consideradas SEGURAS para autocorrección
+# Estas son correcciones ortográficas unívocas o errores gramaticales simples
+_LT_REGLAS_SEGURAS = {
+    # Ortografía básica — typos y acentos
+    'MORFOLOGIK_RULE_ES',          # errores ortográficos generales
+    'ES_ACCENT_ERRORS',            # errores de acentuación
+    'HUNSPELL_NO_SUGGEST_RULE',    # palabras no reconocidas
+    'ES_SIMPLE_REPLACE',           # reemplazos simples
+    # Errores comunes en español
+    'ES_CONFUSION_B_V',            # confusión b/v
+    'ES_CONFUSION_H',              # h muda
+    'ES_CONFUSION_LL_Y',           # confusión ll/y
+    'ES_CONFUSION_C_S_Z',          # confusión c/s/z (seseo)
+    'ES_CONFUSION_G_J',            # confusión g/j
+    'ES_CONFUSION_S_X',            # confusión s/x
+    # Mayúsculas
+    'UPPERCASE_SENTENCE_START',    # mayúscula inicial
+}
+
+
+def autocorregir_con_languagetool(texto, umbral='conservador'):
+    """
+    Aplica correcciones SEGURAS de LanguageTool automáticamente.
+
+    Args:
+        texto: Texto a corregir
+        umbral: Nivel de confianza para aplicar correcciones
+            - 'conservador': solo cuando hay 1 sugerencia única y la regla es segura
+            - 'moderado': acepta hasta 2 sugerencias si la primera es muy probable
+            - 'todos': aplica siempre la primera sugerencia (riesgoso)
+
+    Returns:
+        (texto_corregido, lista_cambios)
+        - texto_corregido: texto con correcciones aplicadas
+        - lista_cambios: lista de strings describiendo cada cambio
+    """
+    if not texto or len(texto.strip()) < _LT_MIN_CHARS:
+        return texto, []
+
+    errores = revisar_con_languagetool(texto)
+    if not errores:
+        return texto, []
+
+    cambios = []
+    texto_corr = texto
+
+    # Ordenar errores por offset descendente para corregir de atrás hacia adelante
+    # (así no se desplazan los offsets de errores anteriores)
+    errores_ordenados = sorted(errores, key=lambda e: e.get('offset', 0), reverse=True)
+
+    for error in errores_ordenados:
+        offset = error.get('offset', 0)
+        largo = error.get('length', 1)
+        sugerencias = [s['value'] for s in error.get('replacements', [])]
+        regla_id = error.get('rule', {}).get('id', '')
+        mensaje = error.get('message', '')
+
+        # Sin sugerencias → no hay nada que corregir
+        if not sugerencias:
+            continue
+
+        # Extraer el fragmento original con error
+        if offset + largo > len(texto_corr):
+            continue
+        original = texto_corr[offset:offset + largo]
+        sugerencia = sugerencias[0]
+
+        # ── Criterios de SEGURIDAD ─────────────────────────────────────────
+        aplicar = False
+        razon = ''
+
+        if umbral == 'conservador':
+            # Solo aplicar si:
+            # 1. Hay una ÚNICA sugerencia (no ambiguo)
+            # 2. La regla está en la lista de reglas seguras
+            # 3. El cambio no altera significativamente la longitud
+            if len(sugerencias) == 1:
+                if regla_id in _LT_REGLAS_SEGURAS:
+                    aplicar = True
+                    razon = f'regla segura: {regla_id}'
+                # También aceptar si el cambio es solo ortográfico (mismos caracteres visibles)
+                elif original.lower().replace('á','a').replace('é','e').replace('í','i').replace('ó','o').replace('ú','u').replace('ü','u') == \
+                     sugerencia.lower().replace('á','a').replace('é','e').replace('í','i').replace('ó','o').replace('ú','u').replace('ü','u'):
+                    # Es solo un cambio de acentos o mayúsculas
+                    if len(original) == len(sugerencia):
+                        aplicar = True
+                        razon = 'corrección de acento/mayúscula'
+
+        elif umbral == 'moderado':
+            # Aceptar hasta 2 sugerencias si la primera parece correcta
+            if len(sugerencias) <= 2:
+                aplicar = True
+                razon = f'umbral moderado ({len(sugerencias)} sugerencias)'
+
+        elif umbral == 'todos':
+            # Aplicar siempre la primera sugerencia (riesgoso)
+            aplicar = True
+            razon = 'umbral todos'
+
+        # ── Aplicar corrección ───────────────────────────────────────────────
+        if aplicar:
+            texto_corr = texto_corr[:offset] + sugerencia + texto_corr[offset + largo:]
+            cambios.append(f'«{original}» → «{sugerencia}» ({razon})')
+
+    return texto_corr, cambios
+
+
+def revisar_con_languagetool(texto):
+    """
+    Llama a la API gratuita de LanguageTool y devuelve lista de errores.
+    Cada error es un dict con: mensaje, sugerencias, offset, largo, regla_id.
+    Devuelve lista vacía si falla la conexión o el texto es muy corto.
+    """
+    if not texto or len(texto.strip()) < _LT_MIN_CHARS:
+        return []
+    try:
+        data = urllib.parse.urlencode({
+            'text':          texto,
+            'language':      _LT_LANG,
+            'disabledRules': _LT_DISABLE,
+        }).encode('utf-8')
+        req = urllib.request.Request(
+            _LT_URL,
+            data=data,
+            headers={'Content-Type': 'application/x-www-form-urlencoded'},
+        )
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            resultado = json.loads(resp.read().decode('utf-8'))
+        return resultado.get('matches', [])
+    except Exception:
+        return []
+
+
+def _lt_fragmento(texto, offset, largo, max_ctx=40):
+    """Extrae el fragmento con error y agrega contexto."""
+    inicio = max(0, offset - 10)
+    fin    = min(len(texto), offset + largo + 10)
+    frag   = texto[inicio:fin].replace('\n', ' ')
+    if len(frag) > max_ctx:
+        frag = frag[:max_ctx] + '…'
+    return frag
+
+
+def verificar_lenguaje_momentos(ws_plan, log, autocorregir=False):
+    """
+    Recorre las celdas de ACTIVIDAD en los 3 momentos de aprendizaje y
+    reporta errores ortográficos y gramaticales usando LanguageTool API.
+
+    Args:
+        ws_plan: Worksheet de planificación
+        log: Lista para mensajes de log
+        autocorregir: Si True, aplica correcciones SEGURAS automáticamente
+                      (solo cambios unívocos de reglas seguras)
+
+    Devuelve (n_revisadas, n_errores, n_correcciones).
+    """
+    if not ws_plan:
+        return 0, 0, 0
+
+    modo_str = 'autocorrección conservadora' if autocorregir else 'solo detección'
+    log.append(f'\n  [Revisión ortográfica/gramatical — LanguageTool es ({modo_str})]')
+
+    revisadas    = 0
+    n_errores    = 0
+    n_correcciones = 0
+    sin_acceso   = False
+
+    # Usar values_only=False para poder modificar celdas si autocorregir=True
+    for row in ws_plan.iter_rows(min_row=4, values_only=False):
+        cell_momento = row[COL['MOMENTO']   - 1]
+        cell_act    = row[COL['ACTIVIDAD'] - 1]
+
+        momento = cell_momento.value if cell_momento else None
+        actividad = cell_act.value if cell_act else None
+
+        if not momento or not actividad:
+            continue
+        m = str(momento).lower()
+        if not any(k in m for k in ('preparación', 'preparacion', 'desarrollo', 'independiente')):
+            continue
+
+        texto = str(actividad).strip()
+        if len(texto) < _LT_MIN_CHARS:
+            continue
+
+        if sin_acceso:
+            break
+
+        errores = revisar_con_languagetool(texto)
+        if errores is None:
+            sin_acceso = True
+            log.append('    ⚠️  Sin acceso a LanguageTool API — revisión omitida')
+            break
+
+        revisadas += 1
+        momento_label = str(momento).strip()
+        errores_encontrados = 0
+
+        # ── Modo AUTOCORRECCIÓN ─────────────────────────────────────────────
+        if autocorregir and errores:
+            texto_corr, cambios = autocorregir_con_languagetool(texto, umbral='conservador')
+
+            if cambios:
+                # Aplicar correcciones a la celda
+                cell_act.value = texto_corr
+                aplicar_azul(cell_act)
+                n_correcciones += len(cambios)
+
+                for cambio in cambios:
+                    log.append(f'    ✅ [{momento_label}] Corregido: {cambio}')
+                    errores_encontrados += 1
+
+            # Reportar errores NO corregidos automáticamente
+            for e in errores:
+                offset  = e.get('offset', 0)
+                largo   = e.get('length', 1)
+                mensaje = e.get('message', '')
+                regla   = e.get('rule', {}).get('id', '')
+                sugs    = [s['value'] for s in e.get('replacements', [])[:3]]
+                frag    = _lt_fragmento(texto, offset, largo)
+
+                # Verificar si este error fue corregido
+                frag_original = texto[offset:offset+largo] if offset + largo <= len(texto) else ''
+                if frag_original.lower() not in [c.split('→')[0].strip('«» ') for c in cambios]:
+                    sug_txt = f' → sugerencia(s): {", ".join(sugs)}' if sugs else ''
+                    log.append(
+                        f'    ⚠️  [{momento_label}] «{frag}» — {mensaje}{sug_txt}'
+                        f'  ({regla})'
+                    )
+                    errores_encontrados += 1
+
+        # ── Modo SOLO DETECCIÓN ───────────────────────────────────────────────
+        else:
+            for e in errores:
+                offset  = e.get('offset', 0)
+                largo   = e.get('length', 1)
+                mensaje = e.get('message', '')
+                regla   = e.get('rule', {}).get('id', '')
+                sugs    = [s['value'] for s in e.get('replacements', [])[:3]]
+                frag    = _lt_fragmento(texto, offset, largo)
+
+                sug_txt = f' → sugerencia(s): {", ".join(sugs)}' if sugs else ''
+                log.append(
+                    f'    ⚠️  [{momento_label}] «{frag}» — {mensaje}{sug_txt}'
+                    f'  ({regla})'
+                )
+                errores_encontrados += 1
+
+        n_errores += errores_encontrados
+        time.sleep(_LT_PAUSA_SEG)
+
+    # ── Resumen ─────────────────────────────────────────────────────────────
+    if not sin_acceso:
+        if n_errores == 0 and revisadas > 0:
+            log.append(f'    ✅ Sin errores detectados ({revisadas} celda(s) revisadas)')
+        elif revisadas == 0:
+            log.append('    ℹ️  Sin celdas de actividad suficientemente largas para revisar')
+
+        resumen = f'LanguageTool: {revisadas} celda(s) revisadas, {n_errores} error(es)'
+        if autocorregir:
+            resumen += f', {n_correcciones} corrección(es) aplicada(s)'
+        log.append(f'\n    {resumen}')
+
+    return revisadas, n_errores, n_correcciones
+
+
+# ══════════════════════════════════════════════════════════════════════════
 #  VERIFICACIÓN A+Se (APRENDIZAJE + SERVICIO E-LEARNING)
 # ══════════════════════════════════════════════════════════════════════════
 
@@ -2882,6 +3182,13 @@ def procesar_asignatura(carpeta_asig, dry_run=False, programa=None, es_as=False)
             wb['Planificación por unidades'], log
         )
 
+    # ── Revisión ortográfica/gramatical con LanguageTool ─────────────────
+    if 'Planificación por unidades' in hojas and _LANGUAGETOOL_ACTIVO:
+        verificar_lenguaje_momentos(
+            wb['Planificación por unidades'], log,
+            autocorregir=_LANGUAGETOOL_AUTOCORREGIR
+        )
+
     # ── Verificación de horas ─────────────────────────────────────────────
     n_hrs_ok = n_hrs_err = 0
     ws_sint_ref = wb['Síntesis didáctica'] if 'Síntesis didáctica' in hojas else None
@@ -2962,7 +3269,15 @@ def main():
         '--log', type=str, default=None,
         help='Guarda el reporte en este archivo (ej: reporte.txt)'
     )
+    parser.add_argument(
+        '--no-languagetool', action='store_true',
+        help='Desactiva la revisión ortográfica/gramatical con LanguageTool API'
+    )
     args = parser.parse_args()
+
+    # Activar/desactivar LanguageTool globalmente
+    global _LANGUAGETOOL_ACTIVO
+    _LANGUAGETOOL_ACTIVO = not args.no_languagetool
 
     base = os.path.expanduser(args.base) if args.base else os.path.expanduser('~/Desktop/DEL')
     timestamp = datetime.now().strftime('%Y-%m-%d %H:%M')
@@ -2972,6 +3287,7 @@ def main():
         f'Generado: {timestamp}',
         f'Carpeta base: {base}',
         f'Modo: {"DRY-RUN (sin guardar)" if args.dry_run else "CORRECCIÓN APLICADA"}',
+        f'LanguageTool: {"desactivado (--no-languagetool)" if args.no_languagetool else "activo (es)"}',
     ]
 
     # Detectar carpetas de asignaturas

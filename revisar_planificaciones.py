@@ -1671,7 +1671,17 @@ _VERBOS_PLURAL_SINGULAR = {
 
 # Ítems numerados que describen acción del docente en lugar del estudiante
 _PAT_ACCION_DOCENTE = re.compile(
-    r'^\d+\.\s+(la docente|el o la docente|el docente|la\/el docente)\s+\w',
+    r'^\d+\.\s+(?:'
+    r'la docente|el o la docente|el docente|la\/el docente'
+    r')\s+\w',
+    re.IGNORECASE
+)
+
+# Ítems donde el estudiante recibe pasivamente del o la docente
+# "Recibe retroalimentación del o la docente…" → el sujeto activo es el docente
+_PAT_RECEPCION_PASIVA = re.compile(
+    r'^\d+\.\s+(?:recibe|observa la|escucha la)\s+'
+    r'.{0,60}(?:del\s+o\s+la\s+docente|del\s+docente|de\s+la\s+docente)',
     re.IGNORECASE
 )
 
@@ -1679,18 +1689,19 @@ _PAT_ACCION_DOCENTE = re.compile(
 _PAT_FRASE_NOMINAL = re.compile(
     r'^\d+\.\s+'
     r'(puesta en|revisión de|análisis de|presentación de|trabajo en|'
-    r'discusión sobre|reflexión sobre|síntesis de|manejo de|introducción a)',
+    r'discusión sobre|reflexión sobre|síntesis de|manejo de|introducción a|'
+    r'bienvenida|presentación del|presentación de la|exposición del|exposición de la)',
     re.IGNORECASE
 )
 
-# Líneas informales sin número que tampoco son título ni Propósito
-# Detecta: notas con "+", keywords sueltos, notas entre paréntesis
-_PAT_LINEA_INFORMAL = re.compile(
-    r'^(?!'                          # NO empieza con…
-    r'\d+\.'                         #   ítem numerado
-    r'|Propósito'                    #   "Propósito:"
-    r'|[A-ZÁÉÍÓÚ][a-záéíóúü]+'     #   palabra con mayúscula (título del momento)
-    r')',
+# Notas editoriales entre paréntesis destinadas al docente (no al estudiante)
+# Detecta: "(mejorar la instruccion)", "(pendiente)", "(agregar recurso)"
+_PAT_NOTA_EDITORIAL = re.compile(
+    r'\([^)]{5,120}(?:'
+    r'mejorar|incorporar|agregar|pendiente|revisar la|revisar el|'
+    r'modificar|instruccion|instrucción|presentacion docente|'
+    r'ver con|falta|corregir esto|ajustar'
+    r')[^)]{0,80}\)',
     re.IGNORECASE
 )
 
@@ -1741,45 +1752,92 @@ _ACENTOS_IMPERATIVO = {
 # Fuente: revisión de planificaciones DEL UST 2025-2 / 2026-1
 # Solo corregibles automáticamente con alta confianza (1:1 sustitución)
 _ORTOGRAFIA_GENERAL = {
-    # Tildes faltantes en palabras comunes
-    'asi':          'así',
-    'tambien':      'también',
-    'ademas':       'además',
-    'solo ':        'solo ',    # "solo" como adverbio no requiere tilde (RAE 2010)
-    'mas ':         'más ',     # "más" con tilde cuando es adverbio
-    'aun ':         'aún ',     # "aún" con tilde cuando = todavía
-    'segun':        'según',
-    'traves':       'través',
-    'a traves':     'a través',
-    'razon':        'razón',
-    'informacion':  'información',
-    'evaluacion':   'evaluación',
-    'presentacion': 'presentación',
-    'participacion':'participación',
-    'elaboracion':  'elaboración',
-    'aplicacion':   'aplicación',
-    'utilizacion':  'utilización',
-    'produccion':   'producción',
-    'realizacion':  'realización',
-    'orientacion':  'orientación',
-    'comprension':  'comprensión',
-    'reflexion':    'reflexión',
-    'integracion':  'integración',
-    'colaboracion': 'colaboración',
-    'comunicacion': 'comunicación',
+    # Tildes faltantes — adverbios y conjunciones
+    'asi':           'así',
+    'tambien':       'también',
+    'ademas':        'además',
+    'segun':         'según',
+    'traves':        'través',
+    'a traves':      'a través',
+    'razon':         'razón',
+    'mas ':          'más ',        # adverbio "más" (no "pero")
+    'aun ':          'aún ',        # "aún" = todavía
+    # Tildes faltantes — sustantivos terminados en -ción (muy frecuentes)
+    'informacion':   'información',
+    'evaluacion':    'evaluación',
+    'presentacion':  'presentación',
+    'participacion': 'participación',
+    'elaboracion':   'elaboración',
+    'aplicacion':    'aplicación',
+    'utilizacion':   'utilización',
+    'produccion':    'producción',
+    'realizacion':   'realización',
+    'orientacion':   'orientación',
+    'comprension':   'comprensión',
+    'reflexion':     'reflexión',
+    'integracion':   'integración',
+    'colaboracion':  'colaboración',
+    'comunicacion':  'comunicación',
     'autoevaluacion':'autoevaluación',
     'sistematizacion':'sistematización',
     'categorizacion':'categorización',
     'planificacion': 'planificación',
-    # Confusiones ortográficas comunes
-    'haber':        None,   # No corregir automáticamente (depende de contexto)
-    'a ver':        None,
-    # Uso incorrecto de mayúsculas en tipos de evaluación (ya manejado en TIPO_MAP)
+    'instruccion':   'instrucción',
+    'introduccion':  'introducción',
+    'revision':      'revisión',
+    'conclusion':    'conclusión',
+    'redaccion':     'redacción',
+    'descripcion':   'descripción',
+    'definicion':    'definición',
+    'preparacion':   'preparación',
+    'construccion':  'construcción',
+    'interaccion':   'interacción',
+    'transicion':    'transición',
+    'distribucion':  'distribución',
+    'investigacion': 'investigación',
+    'implementacion':'implementación',
+    'retroalimentacion':'retroalimentación',
+    'retroalimentacion':'retroalimentación',
+    'observacion':   'observación',
+    'resolucion':    'resolución',
+    'solucion':      'solución',
+    'situacion':     'situación',
+    'intervencion':  'intervención',
+    'exposicion':    'exposición',
+    'composicion':   'composición',
+    'relacion':      'relación',
+    'comparacion':   'comparación',
+    'seleccion':     'selección',
+    'publicacion':   'publicación',
+    'administracion':'administración',
+    # Tildes faltantes — otras palabras comunes
+    'diagnostico':   'diagnóstico',
+    'metodologia':   'metodología',
+    'tecnologia':    'tecnología',
+    'pedagogia':     'pedagogía',
+    'didactica':     'didáctica',
+    'sistematico':   'sistemático',
+    'practico':      'práctico',
+    'teorico':       'teórico',
+    'critico':       'crítico',
+    'especifico':    'específico',
+    'academico':     'académico',
+    'basico':        'básico',
+    'etico':         'ético',
+    'logico':        'lógico',
+    'dinamico':      'dinámico',
+    'autonomia':     'autonomía',
+    'competencia':   'competencia',   # no requiere tilde, confirma
+    # Errores de transposición frecuentes
+    'asigantura':    'asignatura',
+    'evalaucion':    'evaluación',
+    'aprendizaje':   'aprendizaje',   # no requiere tilde, confirma
+    # Confusiones ortográficas — no corregir automáticamente
+    'haber':         None,   # depende de contexto (hay / haber)
+    'a ver':         None,   # podría ser correcto
     # Palabras con b/v
-    'havlar':       'hablar',
-    'havitual':     'habitual',
-    # Separación incorrecta
-    'porcentaje ':  'porcentaje ',
+    'havlar':        'hablar',
+    'havitual':      'habitual',
 }
 
 
@@ -1885,52 +1943,95 @@ def corregir_lenguaje_actividades(ws, log, registro=None):
                  texto, texto_nuevo)
             celdas_modificadas += 1
 
-        # ── 4. Advertencias por revisión manual ───────────────────────────
+        # ── 4. Detección de problemas — una línea puede tener varios issues ──
+        # Se usan `if` independientes (no `elif`) para reportar todos los problemas.
         for linea in texto_nuevo.split('\n'):
             linea = linea.strip()
             if not linea:
                 continue
 
-            # a) Acción descrita como tarea del docente
+            es_numerado = bool(re.match(r'^\d+\.', linea))
+
+            # a) Ítem cuyo sujeto explícito es el o la docente
             if _PAT_ACCION_DOCENTE.match(linea):
                 advertencias.append(
-                    f'    [Plan F{r} {str(momento)[:12]}] ⚠️  Ítem describe acción del docente '
-                    f'(reescribir como instrucción al estudiante): "{linea[:90]}"'
+                    f'    [Plan F{r} {str(momento)[:12]}] ⚠️  Ítem con docente como sujeto '
+                    f'(reescribir dirigido al estudiante): "{linea[:90]}"'
                 )
 
-            # b) Frase nominal sin verbo imperativo
-            elif _PAT_FRASE_NOMINAL.match(linea):
+            # b) Ítem nominal — empieza con sustantivo, no con verbo imperativo
+            if _PAT_FRASE_NOMINAL.match(linea):
                 advertencias.append(
-                    f'    [Plan F{r} {str(momento)[:12]}] ⚠️  Ítem nominal sin verbo '
-                    f'(iniciar con verbo imperativo: Revisa, Lee, Aplica…): "{linea[:90]}"'
+                    f'    [Plan F{r} {str(momento)[:12]}] ⚠️  Ítem nominal sin verbo imperativo '
+                    f'(iniciar con verbo: Analiza, Revisa, Identifica…): "{linea[:90]}"'
                 )
 
-            # c) Línea con "+" como separador de actividades
-            elif '+' in linea and not linea.startswith('Propósito'):
+            # b2) Ítem NUMERADO que no empieza con verbo imperativo
+            # (la verificación d) solo cubre líneas NO numeradas)
+            if es_numerado and not _PAT_ACCION_DOCENTE.match(linea):
+                m_verbo = re.match(r'^\d+\.\s+([A-ZÁÉÍÓÚa-záéíóúü]+)', linea)
+                if m_verbo:
+                    primer = m_verbo.group(1).lower()
+                    if (primer not in _VERBOS_IMPERATIVO
+                            and not _PAT_FRASE_NOMINAL.match(linea)):
+                        advertencias.append(
+                            f'    [Plan F{r} {str(momento)[:12]}] ⚠️  Ítem numerado sin verbo '
+                            f'imperativo ("{m_verbo.group(1)}" no es imperativo — '
+                            f'usar Analiza, Revisa, Identifica…): "{linea[:90]}"'
+                        )
+
+            # c) Separador "+" dentro de un ítem o línea de actividad
+            if '+' in linea and not linea.startswith('Propósito'):
                 advertencias.append(
                     f'    [Plan F{r} {str(momento)[:12]}] ⚠️  Usa "+" como separador '
                     f'(reemplazar por ítems numerados con verbo imperativo): "{linea[:90]}"'
                 )
 
-            # d) Línea no numerada y no título que no empieza con verbo imperativo
-            elif (linea and not re.match(r'^\d+\.', linea)
-                      and not linea.startswith('Propósito')
-                      and not re.match(r'^[A-ZÁÉÍÓÚ][a-záéíóúü ]+$', linea)):
+            # d) Línea NO numerada, no título, sin verbo imperativo
+            if (not es_numerado
+                    and not linea.startswith('Propósito')
+                    and not re.match(r'^[A-ZÁÉÍÓÚ][a-záéíóúü ,]+$', linea)):
                 primer_word = re.split(r'[\s,.]', linea)[0].lower().strip('¡!')
                 if primer_word and primer_word not in _VERBOS_IMPERATIVO:
                     advertencias.append(
-                        f'    [Plan F{r} {str(momento)[:12]}] ⚠️  Línea no inicia con verbo '
-                        f'imperativo (Revisa, Lee, Aplica…): "{linea[:90]}"'
+                        f'    [Plan F{r} {str(momento)[:12]}] ⚠️  Línea sin verbo imperativo '
+                        f'(Revisa, Lee, Aplica…): "{linea[:90]}"'
                     )
 
-        # e) Bloque con ítems numerados pero sin "Propósito:" al final
+            # e) "Propósito:" embebido dentro de un ítem numerado
+            # Debe ser un bloque independiente al final del momento, no parte de un ítem
+            if es_numerado and re.search(r'Prop[oó]sito\s*:', linea, re.IGNORECASE):
+                advertencias.append(
+                    f'    [Plan F{r} {str(momento)[:12]}] ⚠️  "Propósito:" dentro de ítem '
+                    f'numerado — debe ser línea independiente al final del bloque: '
+                    f'"{linea[:90]}"'
+                )
+
+            # f) Recepción pasiva del estudiante (docente es el agente activo)
+            if _PAT_RECEPCION_PASIVA.match(linea):
+                advertencias.append(
+                    f'    [Plan F{r} {str(momento)[:12]}] ⚠️  Ítem pasivo (docente actúa, '
+                    f'estudiante solo recibe) — reformular con verbo activo '
+                    f'(Reflexiona, Registra, Compara…): "{linea[:90]}"'
+                )
+
+            # g) Nota editorial entre paréntesis dirigida al docente
+            if _PAT_NOTA_EDITORIAL.search(linea):
+                advertencias.append(
+                    f'    [Plan F{r} {str(momento)[:12]}] ⚠️  Nota editorial entre paréntesis '
+                    f'(eliminar: el texto debe dirigirse al estudiante, '
+                    f'no contener instrucciones para el docente): "{linea[:90]}"'
+                )
+
+        # h) Bloque con ítems numerados sin "Propósito:" al final
         # Fuente: Manual Diseño Instruccional UST, p. 19 — estructura obligatoria
-        tiene_items_numerados = bool(re.search(r'^\d+\.', texto_nuevo, re.MULTILINE))
-        tiene_proposito = bool(re.search(r'Prop[oó]sito\s*:', texto_nuevo, re.IGNORECASE))
-        if tiene_items_numerados and not tiene_proposito:
+        tiene_items = bool(re.search(r'^\d+\.', texto_nuevo, re.MULTILINE))
+        tiene_prop  = bool(re.search(r'Prop[oó]sito\s*:', texto_nuevo, re.IGNORECASE))
+        if tiene_items and not tiene_prop:
             advertencias.append(
-                f'    [Plan F{r} {str(momento)[:12]}] ⚠️  Falta "Propósito:" '
-                f'al final del bloque (estructura obligatoria: título + ítems + Propósito, Manual UST p.19)'
+                f'    [Plan F{r} {str(momento)[:12]}] ⚠️  Falta "Propósito:" al final '
+                f'del bloque (estructura obligatoria: título + ítems numerados + '
+                f'Propósito, Manual UST p.19)'
             )
 
     if advertencias:

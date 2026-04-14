@@ -872,6 +872,10 @@ def procesar_instancia2(plan_bytes, escala_bytes,
     resultados_escala = verificar_escala(wb)
     log.extend(formatear_verificacion(resultados_escala, 'archivo'))
 
+    # ── Verificación de momentos (Manual Diseño Instruccional UST) ──────────
+    if 'Planificación por unidades' in hojas:
+        verificar_momentos(wb['Planificación por unidades'], log)
+
     # ── Verificación vs programa ───────────────────────────────────────────
     verificar_contra_programa(wb, programa, log)
 
@@ -1190,19 +1194,35 @@ def verificar_escala(wb):
         check('Estrategias evaluativas', 1, ESCALA_ESTANDAR[idx][2], 'auto', e, d)
         idx += 1
 
-        # Criterio 2: todos los tipos presentes por unidad
-        # Excluir filas de LGA / Examen final (no son unidades temáticas)
+        # Criterio 2: estructura evaluativa según Manual de Diseño Instruccional UST
+        # - Diagnóstica: 1 por asignatura (no por unidad) → solo se verifica global
+        # - Formativa: ≥ 1 por unidad temática
+        # - Sumativa: exactamente 1 por unidad temática
+        # Fuente: Manual Diseño Instruccional E-Learning, Res. N°481/24, p. 18
         EXCLUIR_UNIDADES = {'evaluación final', 'lga', 'examen'}
         faltantes = []
+
+        # Verificación global: ¿hay al menos 1 Diagnóstica en toda la planificación?
+        tiene_diagnostica_global = any(
+            'diagnóstica' in t
+            for tipos in tipos_por_unidad.values()
+            for t in tipos
+        )
+        if not tiene_diagnostica_global:
+            faltantes.append('Asignatura: falta evaluación Diagnóstica (1 por asignatura)')
+
+        # Verificación por unidad: Formativa ≥1 y Sumativa = 1
         for u, tipos in tipos_por_unidad.items():
             if any(ex in str(u).lower() for ex in EXCLUIR_UNIDADES):
                 continue
-            for t_req in ('diagnóstica', 'formativa', 'sumativa'):
-                if not any(t_req in t for t in tipos):
-                    faltantes.append(f'{u[:35]}: falta {t_req}')
+            if not any('formativa' in t for t in tipos):
+                faltantes.append(f'{u[:35]}: falta Formativa (≥1 por unidad)')
+            if not any('sumativa' in t for t in tipos):
+                faltantes.append(f'{u[:35]}: falta Sumativa (1 por unidad)')
+
         e = '✅' if not faltantes else '❌'
-        d = 'Diagnóstica/Formativa/Sumativa presentes por unidad' if not faltantes \
-            else '; '.join(faltantes)
+        d = ('Diagnóstica (global) + Formativa y Sumativa presentes por unidad'
+             if not faltantes else '; '.join(faltantes))
         check('Estrategias evaluativas', 2, ESCALA_ESTANDAR[idx][2], 'auto', e, d)
         idx += 1
 
@@ -1563,30 +1583,91 @@ _PAT_LINEA_INFORMAL = re.compile(
 )
 
 # Verbos imperativos 2ª persona válidos para iniciar ítems
+# Fuente base + Manual Diseño Instruccional UST (Res. N°481/24), Tabla 1 (p.19)
 _VERBOS_IMPERATIVO = {
-    'accede','activa','agrega','amplía','analiza','anota','aplica','argumenta',
-    'atiende','ayuda','busca','calcula','categoriza','clasifica','colabora',
-    'comenta','compara','comparte','completa','conecta','construye','consulta',
-    'contesta','contrasta','contribuye','coopera','corrige','crea','cuestiona',
-    'deduce','define','describe','desarrolla','destaca','diferencia','diseña',
-    'documenta','elabora','elabora','emplea','enumera','escribe','escucha',
-    'esquematiza','evalúa','examina','explica','explora','expone','familiarízate',
-    'formula','grafica','identifica','implementa','infiere','interpreta',
-    'investiga','justifica','lee','lista','localiza','mapea','marca','mide',
+    # A
+    'accede','activa','adapta','agrega','amplía','analiza','anota','aplica',
+    'argumenta','asiste','atiende','ayuda',
+    # B-C
+    'busca','calcula','categoriza','clasifica','colabora','comenta','compara',
+    'comparte','completa','comprende','conecta','construye','consulta','contesta',
+    'contrasta','contribuye','coopera','corrige','crea','cuestiona',
+    # D-E
+    'debate','deduce','define','describe','desarrolla','destaca','determina',
+    'diferencia','diseña','documenta','elabora','emplea','enumera','escribe',
+    'escucha','esquematiza','evalúa','examina','explica','explora','expone',
+    # F-I
+    'familiarízate','formula','grafica','identifica','implementa','infiere',
+    'ingresa','interpreta','investiga',
+    # J-M
+    'justifica','lee','lista','localiza','mapea','marca','mide','moviliza',
+    # N-P
     'nota','observa','optimiza','organiza','participa','planifica','practica',
-    'prepara','presenta','prioriza','profundiza','propone','publica','recibe',
-    'recuerda','redacta','reflexiona','registra','relaciona','repasa','responde',
-    'retoma','revisa','resume','selecciona','señala','sintetiza','sistematiza',
-    'socializa','soluciona','subraya','sube','tabula','toma','trabaja','ubica',
-    'usa','utiliza','valida','valora','verifica',
+    'prepara','presenta','prioriza','profundiza','propone','publica',
+    # R
+    'realiza','recibe','recuerda','recoge','redacta','reflexiona','registra',
+    'relaciona','repasa','responde','retoma','revisa','resume',
+    # S-Z
+    'selecciona','señala','sintetiza','sistematiza','socializa','soluciona',
+    'subraya','sube','tabula','toma','trabaja','ubica','usa','utiliza',
+    'valida','valora','verifica','visualiza',
 }
 
 # Imperativas con acento incorrecto → forma correcta
+# Las formas agudas de tipo "clasifíca" son incorrecto — el imperativo es grave: "clasifica"
 _ACENTOS_IMPERATIVO = {
     'clasifíca': 'clasifica', 'identifíca': 'identifica',
     'analíza':   'analiza',   'organíza':   'organiza',
     'sintetíza': 'sintetiza', 'especifíca': 'especifica',
     'calífca':   'califica',  'justifíca':  'justifica',
+    'diferéncia':'diferencia','categoríza': 'categoriza',
+    'sistematíza':'sistematiza','priorizá': 'prioriza',
+    'visualíza': 'visualiza', 'resumé':     'resume',
+}
+
+# ── Correcciones ortográficas generales (errores frecuentes en planificaciones)
+# Fuente: revisión de planificaciones DEL UST 2025-2 / 2026-1
+# Solo corregibles automáticamente con alta confianza (1:1 sustitución)
+_ORTOGRAFIA_GENERAL = {
+    # Tildes faltantes en palabras comunes
+    'asi':          'así',
+    'tambien':      'también',
+    'ademas':       'además',
+    'solo ':        'solo ',    # "solo" como adverbio no requiere tilde (RAE 2010)
+    'mas ':         'más ',     # "más" con tilde cuando es adverbio
+    'aun ':         'aún ',     # "aún" con tilde cuando = todavía
+    'segun':        'según',
+    'traves':       'través',
+    'a traves':     'a través',
+    'razon':        'razón',
+    'informacion':  'información',
+    'evaluacion':   'evaluación',
+    'presentacion': 'presentación',
+    'participacion':'participación',
+    'elaboracion':  'elaboración',
+    'aplicacion':   'aplicación',
+    'utilizacion':  'utilización',
+    'produccion':   'producción',
+    'realizacion':  'realización',
+    'orientacion':  'orientación',
+    'comprension':  'comprensión',
+    'reflexion':    'reflexión',
+    'integracion':  'integración',
+    'colaboracion': 'colaboración',
+    'comunicacion': 'comunicación',
+    'autoevaluacion':'autoevaluación',
+    'sistematizacion':'sistematización',
+    'categorizacion':'categorización',
+    'planificacion': 'planificación',
+    # Confusiones ortográficas comunes
+    'haber':        None,   # No corregir automáticamente (depende de contexto)
+    'a ver':        None,
+    # Uso incorrecto de mayúsculas en tipos de evaluación (ya manejado en TIPO_MAP)
+    # Palabras con b/v
+    'havlar':       'hablar',
+    'havitual':     'habitual',
+    # Separación incorrecta
+    'porcentaje ':  'porcentaje ',
 }
 
 
@@ -1666,6 +1747,18 @@ def corregir_lenguaje_actividades(ws, log):
                 cambios_celda.append(f'acento incorrecto: "{mal}" → "{bien}"')
                 texto_nuevo = t2
 
+        # ── 3c. Correcciones ortográficas generales ───────────────────────
+        # Solo aplica correcciones con alta confianza (valor no-None en el dict)
+        for mal, bien in _ORTOGRAFIA_GENERAL.items():
+            if bien is None:
+                continue   # contexto-dependiente, no corregir
+            # Buscar palabra completa (con posibles tildes perdidas)
+            pat = re.compile(r'\b' + re.escape(mal) + r'\b', re.IGNORECASE)
+            t2 = pat.sub(bien, texto_nuevo)
+            if t2 != texto_nuevo:
+                cambios_celda.append(f'ortografía: "{mal}" → "{bien}"')
+                texto_nuevo = t2
+
         # ── Aplicar cambios si los hubo ───────────────────────────────────
         if texto_nuevo != texto:
             cell.value = texto_nuevo
@@ -1712,11 +1805,236 @@ def corregir_lenguaje_actividades(ws, log):
                         f'imperativo (Revisa, Lee, Aplica…): "{linea[:90]}"'
                     )
 
+        # e) Bloque con ítems numerados pero sin "Propósito:" al final
+        # Fuente: Manual Diseño Instruccional UST, p. 19 — estructura obligatoria
+        tiene_items_numerados = bool(re.search(r'^\d+\.', texto_nuevo, re.MULTILINE))
+        tiene_proposito = bool(re.search(r'Prop[oó]sito\s*:', texto_nuevo, re.IGNORECASE))
+        if tiene_items_numerados and not tiene_proposito:
+            advertencias.append(
+                f'    [Plan F{r} {str(momento)[:12]}] ⚠️  Falta "Propósito:" '
+                f'al final del bloque (estructura obligatoria: título + ítems + Propósito, Manual UST p.19)'
+            )
+
     if advertencias:
         log.append('\n  [Advertencias de lenguaje — requieren revisión manual]')
         log.extend(advertencias)
 
     return celdas_modificadas
+
+
+# ══════════════════════════════════════════════════════════════════════════
+#  VERIFICACIÓN DE MOMENTOS (Manual Diseño Instruccional UST, Res. N°481/24)
+# ══════════════════════════════════════════════════════════════════════════
+#
+# Reglas según el Manual de Diseño Instruccional en E-Learning (pp. 17-22):
+#
+# PREPARACIÓN (TPE — Tiempo de Preparación del Estudiante)
+#   • Debe incluir al menos un recurso didáctico (col H) de tipo T1/T2/T3
+#   • Las actividades deben ser de exploración/revisión previa (no sumativas)
+#   • La evaluación Diagnóstica debe ubicarse en Preparación (inicio de unidad)
+#   • Cada bloque debe terminar con "Propósito:" (estructura de actividad)
+#
+# DESARROLLO (Sincrónico / Asincrónico / Presencial)
+#   • Momento central de aprendizaje — debe existir en cada unidad
+#   • Contiene las evaluaciones Formativas y/o la principal actividad de la unidad
+#   • Si la modalidad es sincrónica, Medio de entrega debe ser "No aplica"
+#   • Si es asincrónica, puede tener Buzón de tareas
+#
+# TRABAJO INDEPENDIENTE (Autónomo del estudiante)
+#   • Debe mostrar autonomía del estudiante (producto, entrega, evaluación)
+#   • Medio de entrega debe ser "Buzón de tareas" (ya corregido automáticamente)
+#   • Evaluaciones Sumativas pueden ubicarse aquí o en Desarrollo
+#   • Debe tener instrucciones claras en imperativo (ya verificado)
+
+# Tipos de recursos válidos según Manual (p. 25-27)
+_RECURSOS_T1 = {'videoclase', 'video cápsula', 'video capsula', 'podcast', 'video'}
+_RECURSOS_T2 = {'genially'}
+_RECURSOS_T3 = {'guía de aprendizaje', 'guia de aprendizaje', 'guía de ejercicios',
+                'guia de ejercicios', 'apunte', 'infografía', 'infografia'}
+_RECURSOS_T4 = {'foro', 'quiz', 'tarea', 'cuestionario'}
+_RECURSOS_VALIDOS = _RECURSOS_T1 | _RECURSOS_T2 | _RECURSOS_T3 | _RECURSOS_T4
+
+
+def verificar_momentos(ws_plan, log):
+    """
+    Verifica reglas de los 3 momentos de aprendizaje según el Manual de
+    Diseño Instruccional en E-Learning UST (Resolución N°481/24).
+
+    Reglas verificadas:
+    1. Preparación: debe tener recursos didácticos
+    2. Preparación: Diagnóstica debe ubicarse aquí (no en Desarrollo/TI)
+    3. Preparación: no debe contener evaluaciones Sumativas
+    4. Desarrollo: debe existir en cada unidad
+    5. Trabajo Independiente: debe existir en cada unidad
+    6. Actividades: deben contener "Propósito:" (estructura obligatoria)
+    7. Recursos: deben corresponder a tipos T1/T2/T3/T4 del manual
+
+    Devuelve (n_ok, n_advertencias).
+    """
+    if not ws_plan:
+        return 0, 0
+
+    # ── Recolectar datos por fila ──────────────────────────────────────────
+    unidad_actual  = None
+    datos_unidades = {}   # unidad → {'prep': [], 'des': [], 'ti': []}
+
+    for row in ws_plan.iter_rows(min_row=4, values_only=True):
+        unidad    = row[COL['UNIDAD']    - 1]
+        momento   = row[COL['MOMENTO']  - 1]
+        actividad = row[COL['ACTIVIDAD']- 1]
+        recursos  = row[COL['RECURSOS'] - 1]
+        tipo      = row[COL['TIPO']     - 1]
+
+        if unidad:
+            unidad_actual = str(unidad).strip()
+        if not unidad_actual:
+            continue
+
+        if unidad_actual not in datos_unidades:
+            datos_unidades[unidad_actual] = {'prep': [], 'des': [], 'ti': []}
+
+        m = str(momento or '').lower()
+        fila = {
+            'actividad': str(actividad or ''),
+            'recursos':  str(recursos  or ''),
+            'tipo':      str(tipo      or '').lower(),
+        }
+
+        if 'preparación' in m or 'preparacion' in m:
+            datos_unidades[unidad_actual]['prep'].append(fila)
+        elif 'desarrollo' in m:
+            datos_unidades[unidad_actual]['des'].append(fila)
+        elif 'independiente' in m:
+            datos_unidades[unidad_actual]['ti'].append(fila)
+
+    # ── Verificaciones por unidad ──────────────────────────────────────────
+    advertencias = []
+    oks = []
+
+    EXCLUIR = {'evaluación final', 'lga', 'examen', 'total'}
+
+    for unidad, momentos_data in datos_unidades.items():
+        if any(ex in unidad.lower() for ex in EXCLUIR):
+            continue
+
+        u_corta = unidad[:35]
+        prep = momentos_data['prep']
+        des  = momentos_data['des']
+        ti   = momentos_data['ti']
+
+        # Regla 1: Preparación debe existir
+        if not prep:
+            advertencias.append(
+                f'    ⚠️  {u_corta}: sin momento Preparación '
+                f'(Manual UST p.17: obligatorio antes de cada sesión)')
+        else:
+            oks.append(f'{u_corta}: Preparación presente ({len(prep)} fila(s))')
+
+        # Regla 2: Preparación debe tener recursos
+        if prep:
+            prep_sin_recursos = [f for f in prep if not f['recursos'].strip()]
+            if prep_sin_recursos:
+                advertencias.append(
+                    f'    ⚠️  {u_corta}: {len(prep_sin_recursos)} fila(s) de Preparación '
+                    f'sin recursos didácticos (Manual UST p.25: T1/T2/T3 obligatorios)')
+            else:
+                oks.append(f'{u_corta}: Preparación tiene recursos')
+
+        # Regla 3: Diagnóstica debe estar en Preparación (no en Desarrollo/TI)
+        diag_en_prep = any('diagnóst' in f['tipo'] for f in prep)
+        diag_en_des  = any('diagnóst' in f['tipo'] for f in des)
+        diag_en_ti   = any('diagnóst' in f['tipo'] for f in ti)
+        if (diag_en_des or diag_en_ti) and not diag_en_prep:
+            advertencias.append(
+                f'    ⚠️  {u_corta}: Diagnóstica en Desarrollo/TI — '
+                f'Manual UST p.18: debe ubicarse en Preparación (inicio de unidad)')
+        elif diag_en_prep:
+            oks.append(f'{u_corta}: Diagnóstica correctamente en Preparación')
+
+        # Regla 4: No debe haber Sumativa en Preparación
+        sumativa_en_prep = any('sumativ' in f['tipo'] for f in prep)
+        if sumativa_en_prep:
+            advertencias.append(
+                f'    ⚠️  {u_corta}: Evaluación Sumativa en momento Preparación '
+                f'(Manual UST p.18: Sumativa va en Desarrollo o Trabajo Independiente)')
+
+        # Regla 5: Desarrollo debe existir
+        if not des:
+            advertencias.append(
+                f'    ⚠️  {u_corta}: sin momento Desarrollo '
+                f'(Manual UST p.17: momento central obligatorio por unidad)')
+        else:
+            oks.append(f'{u_corta}: Desarrollo presente ({len(des)} fila(s))')
+
+        # Regla 6: Trabajo Independiente debe existir
+        if not ti:
+            advertencias.append(
+                f'    ⚠️  {u_corta}: sin Trabajo Independiente '
+                f'(Manual UST p.17: autonomía del estudiante obligatoria por unidad)')
+        else:
+            oks.append(f'{u_corta}: Trabajo Independiente presente ({len(ti)} fila(s))')
+
+        # Regla 7: TI debe tener al menos una evaluación o actividad con producto
+        if ti:
+            ti_con_eval = any(f['tipo'] for f in ti)
+            ti_con_actividad = any(f['actividad'].strip() for f in ti)
+            if not ti_con_eval and not ti_con_actividad:
+                advertencias.append(
+                    f'    ⚠️  {u_corta}: Trabajo Independiente sin actividad ni evaluación '
+                    f'(Manual UST p.20: debe evidenciar producto o entrega del estudiante)')
+
+    # ── Verificación global: estructura de actividades (Propósito) ─────────
+    n_sin_proposito = 0
+    n_con_proposito = 0
+    for row in ws_plan.iter_rows(min_row=4, values_only=True):
+        actividad = row[COL['ACTIVIDAD'] - 1]
+        momento   = row[COL['MOMENTO']  - 1]
+        if not actividad or not momento:
+            continue
+        texto = str(actividad)
+        tiene_items = bool(re.search(r'^\d+\.', texto, re.MULTILINE))
+        tiene_prop  = bool(re.search(r'Prop[oó]sito\s*:', texto, re.IGNORECASE))
+        if tiene_items and tiene_prop:
+            n_con_proposito += 1
+        elif tiene_items and not tiene_prop:
+            n_sin_proposito += 1
+
+    if n_sin_proposito > 0:
+        advertencias.append(
+            f'    ⚠️  {n_sin_proposito} celda(s) con ítems numerados pero sin "Propósito:" '
+            f'(Manual UST p.19: estructura: título + ítems numerados + Propósito obligatorio)')
+    elif n_con_proposito > 0:
+        oks.append(f'{n_con_proposito} bloque(s) con Propósito correctamente declarado')
+
+    # ── Verificación global: tipos de recursos ─────────────────────────────
+    recursos_desconocidos = []
+    for row in ws_plan.iter_rows(min_row=4, values_only=True):
+        recursos = str(row[COL['RECURSOS'] - 1] or '').strip().lower()
+        if not recursos:
+            continue
+        # Verificar que al menos un recurso reconocido esté presente
+        reconocido = any(r in recursos for r in _RECURSOS_VALIDOS)
+        if not reconocido and len(recursos) > 3:
+            recursos_desconocidos.append(recursos[:60])
+
+    if recursos_desconocidos:
+        n_desc = len(set(recursos_desconocidos))
+        advertencias.append(
+            f'    ⚠️  {n_desc} tipo(s) de recurso no reconocido(s) '
+            f'(Manual UST p.25: T1=Video/Podcast, T2=Genially, T3=Guía/Apunte, T4=Foro/Quiz/Tarea)')
+
+    # ── Reporte ───────────────────────────────────────────────────────────
+    log.append('\n  [Verificación de momentos — Manual Diseño Instruccional UST (Res. N°481/24)]')
+    for o in oks:
+        log.append(f'    ✅ {o}')
+    for a in advertencias:
+        log.append(a)
+
+    if not advertencias:
+        log.append('    ✅ Estructura de momentos correcta en todas las unidades')
+
+    log.append(f'\n    Momentos: {len(oks)}✅  {len(advertencias)}⚠️  advertencias')
+    return len(oks), len(advertencias)
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -1976,6 +2294,13 @@ def procesar_asignatura(carpeta_asig, dry_run=False, programa=None, es_as=False)
     resultados_escala = verificar_escala(wb)
     log.extend(formatear_verificacion(resultados_escala, fuente_escala))
 
+    # ── Verificación de momentos (Manual Diseño Instruccional UST) ──────────
+    n_mom_ok = n_mom_adv = 0
+    if 'Planificación por unidades' in hojas:
+        n_mom_ok, n_mom_adv = verificar_momentos(
+            wb['Planificación por unidades'], log
+        )
+
     # ── Verificación contra programa oficial (si se proveyó PDF) ───────────
     n_discrepancias = verificar_contra_programa(wb, programa, log)
 
@@ -2010,6 +2335,7 @@ def procesar_asignatura(carpeta_asig, dry_run=False, programa=None, es_as=False)
     log.append(f'    ─────────────────────────────')
     log.append(f'    TOTAL                  : {total} correcciones')
     log.append(f'    🔵 Celdas modificadas marcadas con fuente azul (#0070C0)')
+    log.append(f'    📖 Verificación momentos (Manual UST): {n_mom_ok}✅  {n_mom_adv}⚠️ advertencias')
     if programa:
         log.append(f'    📄 Verificación vs programa: {n_discrepancias} discrepancia(s) encontrada(s)')
     if es_as:

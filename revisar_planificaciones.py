@@ -2040,7 +2040,8 @@ _PAT_FRASE_NOMINAL = re.compile(
     r'^(?:\d+\.\s+)?'
     r'(puesta en|revisión de|análisis de|presentación de|trabajo en|'
     r'discusión sobre|reflexión sobre|síntesis de|manejo de|introducción a|'
-    r'bienvenida|presentación del|presentación de la|exposición del|exposición de la)',
+    r'bienvenida|presentación del|presentación de la|exposición del|exposición de la|'
+    r'pódcast|podcast|video|vídeo|lectura|actividad de|taller de|evaluación de)',
     re.IGNORECASE
 )
 
@@ -2541,8 +2542,9 @@ def corregir_lenguaje_actividades(ws, log, registro=None):
             # c) Separador "+"
             if '+' in linea:
                 advertencias.append(
-                    f'    [Plan F{r} {str(momento)[:12]}] ⚠️  Usa "+" como separador '
-                    f'(reemplazar por ítems con verbo imperativo): "{linea[:90]}"'
+                    f'    [Plan F{r} {str(momento)[:12]}] ⚠️  Usa "+" como separador — '
+                    f'es una nota de planificación docente, NO una instrucción al estudiante. '
+                    f'Reescribir como ítems numerados con verbo imperativo: "{linea[:90]}"'
                 )
 
             # d) Cualquier ítem (numerado o no) sin verbo imperativo al inicio

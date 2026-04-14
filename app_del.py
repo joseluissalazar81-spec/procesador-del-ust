@@ -196,27 +196,33 @@ st.markdown("""
 
     /* ── Botones por instancia (colores pasteles institucionales) ── */
     /* Instancia 1 — verde menta pastel */
-    div[data-testid="stTabsContent"]:nth-of-type(1) button[kind="primary"] {
+    div[data-testid="stTabs"] > div > div:nth-child(1) button[kind="primary"],
+    div[data-testid="stTabs"] > div > div:nth-child(1) button[data-testid="baseButton-primary"] {
         background-color: #4A9068 !important;
         border-color:     #4A9068 !important;
     }
-    div[data-testid="stTabsContent"]:nth-of-type(1) button[kind="primary"]:hover {
+    div[data-testid="stTabs"] > div > div:nth-child(1) button[kind="primary"]:hover,
+    div[data-testid="stTabs"] > div > div:nth-child(1) button[data-testid="baseButton-primary"]:hover {
         background-color: #357a52 !important;
     }
     /* Instancia 2 — azul cielo pastel */
-    div[data-testid="stTabsContent"]:nth-of-type(2) button[kind="primary"] {
+    div[data-testid="stTabs"] > div > div:nth-child(2) button[kind="primary"],
+    div[data-testid="stTabs"] > div > div:nth-child(2) button[data-testid="baseButton-primary"] {
         background-color: #4A7FA5 !important;
         border-color:     #4A7FA5 !important;
     }
-    div[data-testid="stTabsContent"]:nth-of-type(2) button[kind="primary"]:hover {
+    div[data-testid="stTabs"] > div > div:nth-child(2) button[kind="primary"]:hover,
+    div[data-testid="stTabs"] > div > div:nth-child(2) button[data-testid="baseButton-primary"]:hover {
         background-color: #356488 !important;
     }
     /* Instancia 3 — violeta lavanda pastel */
-    div[data-testid="stTabsContent"]:nth-of-type(3) button[kind="primary"] {
+    div[data-testid="stTabs"] > div > div:nth-child(3) button[kind="primary"],
+    div[data-testid="stTabs"] > div > div:nth-child(3) button[data-testid="baseButton-primary"] {
         background-color: #8B6EAF !important;
         border-color:     #8B6EAF !important;
     }
-    div[data-testid="stTabsContent"]:nth-of-type(3) button[kind="primary"]:hover {
+    div[data-testid="stTabs"] > div > div:nth-child(3) button[kind="primary"]:hover,
+    div[data-testid="stTabs"] > div > div:nth-child(3) button[data-testid="baseButton-primary"]:hover {
         background-color: #70578f !important;
     }
 </style>

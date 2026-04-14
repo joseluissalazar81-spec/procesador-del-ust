@@ -280,6 +280,23 @@ def parsear_log(log: list[str]) -> dict:
     return resultado
 
 
+def _nombre_descarga(programa: dict | None, instancia: int) -> str:
+    """
+    Genera el nombre del archivo de descarga:
+      {CODIGO}_{Nombre_Asignatura}_Revisado_I{N}.xlsx
+    Si no hay programa, usa solo Revisado_I{N}.xlsx
+    """
+    prog = programa or {}
+    codigo = (prog.get("codigo") or "").strip()
+    nombre = (prog.get("asignatura") or "").strip()
+    # Limpiar caracteres no válidos para nombre de archivo
+    nombre_limpio = re.sub(r'[\\/:*?"<>|]', '', nombre).strip()
+    nombre_limpio = re.sub(r'\s+', '_', nombre_limpio)
+    partes = [p for p in [codigo, nombre_limpio] if p]
+    base   = "_".join(partes) if partes else "Planificacion"
+    return f"{base}_Revisado_I{instancia}.xlsx"
+
+
 def tag(texto: str, tipo: str) -> str:
     css = {"ok": "tag-ok", "error": "tag-error", "warn": "tag-warn"}.get(tipo, "tag-warn")
     return f'<span class="{css}">{texto}</span>'
@@ -646,7 +663,7 @@ with tab_i1:
                         # ────────────────────────────────────────────────
                         with open(salidas[0], "rb") as f:
                             output_bytes = f.read()
-                        output_name = os.path.basename(salidas[0])
+                        output_name = _nombre_descarga(programa, 1)
 
         st.divider()
         st.markdown("### Resultados")
@@ -978,6 +995,8 @@ def _render_instancia_escala(tab, instancia_num, key_prefix):
                     es_as=es_as_x,
                     instancia_num=instancia_num,
                 )
+                if ok_x:
+                    out_name_x = _nombre_descarga(programa_x, instancia_num)
 
             st.divider()
             st.markdown("### Resultados")

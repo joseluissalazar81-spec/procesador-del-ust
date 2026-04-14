@@ -55,6 +55,7 @@ import openpyxl
 from openpyxl.styles import Font, PatternFill, Alignment
 from openpyxl.utils import get_column_letter
 from datetime import datetime
+from collections import Counter
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -1710,6 +1711,152 @@ _PAT_TITULO_MOMENTO = re.compile(
 )
 
 # Verbos imperativos 2ª persona válidos para iniciar ítems
+# ── Stopwords para extracción de palabras clave del Propósito ────────────
+_STOPWORDS_COHERENCIA = {
+    'el', 'la', 'los', 'las', 'un', 'una', 'unos', 'unas', 'de', 'del', 'al',
+    'en', 'con', 'por', 'para', 'que', 'se', 'su', 'sus', 'y', 'o', 'a', 'e',
+    'es', 'son', 'ser', 'sobre', 'como', 'este', 'esta', 'estos', 'estas',
+    'cada', 'todo', 'toda', 'todos', 'todas', 'través', 'partir', 'hacia',
+    'desde', 'durante', 'según', 'entre', 'sin', 'más', 'menos', 'muy',
+    'bien', 'manera', 'forma', 'proceso', 'nivel', 'tipo', 'caso', 'casos',
+    'parte', 'través', 'también', 'además', 'través', 'través',
+    # verbos copulativos y auxiliares
+    'está', 'están', 'fue', 'fueron', 'han', 'hay', 'tiene', 'tienen',
+    # preposiciones compuestas
+    'través', 'través', 'través',
+}
+
+# ── Frases genéricas sin especificidad de contenido ──────────────────────
+_FRASES_GENERICAS = re.compile(
+    r'^(?:\d+\.\s+)?(?:'
+    r'participa\s+activamente|presta\s+atención|está\s+atento|'
+    r'mantiene\s+(?:el\s+)?orden|escucha\s+con\s+atención|'
+    r'sigue\s+las\s+instrucciones|realiza\s+la\s+actividad|'
+    r'completa\s+la\s+actividad|desarrolla\s+la\s+actividad|'
+    r'toma\s+apuntes|anota\s+lo\s+importante|copia\s+(?:los\s+)?contenidos|'
+    r'lee\s+el\s+texto\s*$|observa\s+el\s+video\s*$|'
+    r'participa\s+en\s+la\s+actividad|trabaja\s+en\s+la\s+actividad'
+    r')',
+    re.IGNORECASE
+)
+
+# ── Verbos/frases que indican entrega o producción concreta ──────────────
+_VERBOS_ENTREGA = {
+    'entrega', 'sube', 'publica', 'envía', 'envia', 'presenta',
+    'elabora', 'redacta', 'escribe', 'construye', 'diseña', 'diseña',
+}
+
+# ── Verbos que no corresponden a Preparación (activación de saberes) ─────
+_VERBOS_INCOMPATIBLES_PREP = re.compile(
+    r'\b(?:entrega|sube al foro|sube la tarea|publica|envía su|'
+    r'presenta su informe|rinde|da la prueba)\b',
+    re.IGNORECASE
+)
+
+
+def _analizar_coherencia_bloque(titulo, proposito_texto, items, momento_col,
+                                 fila, advertencias):
+    """
+    Verifica coherencia semántica y calidad de redacción dentro de un bloque
+    de actividades (Preparación, Desarrollo o Trabajo Independiente).
+
+    Detecta:
+    1. Baja alineación entre Propósito e ítems (palabras clave no aparecen)
+    2. Ítems genéricos sin especificidad de contenido
+    3. Ítems demasiado breves (< 4 palabras reales)
+    4. Verbos iniciales que se repiten ≥ 3 veces (monotonía cognitiva)
+    5. Ítems de entrega/producción en Preparación (incoherencia de momento)
+    6. Trabajo Independiente sin ninguna actividad de producción/entrega
+    """
+    momento_lower = str(momento_col or '').lower()
+    tag = f'[Plan F{fila} {str(momento_col or "")[:12]}]'
+
+    if not items:
+        return
+
+    # ── 1. Alineación Propósito ↔ ítems ──────────────────────────────────
+    if proposito_texto:
+        palabras_prop = {
+            w.lower().strip('.,;:()¿?¡!"')
+            for w in proposito_texto.split()
+            if len(w) > 4 and w.lower().strip('.,;:()') not in _STOPWORDS_COHERENCIA
+        }
+        texto_items = ' '.join(items).lower()
+        encontradas = sum(1 for w in palabras_prop if w in texto_items)
+        total_kw = len(palabras_prop)
+
+        if total_kw >= 3 and encontradas == 0:
+            advertencias.append(
+                f'    {tag} ⚠️  Incoherencia Propósito↔ítems: el Propósito declara '
+                f'"{proposito_texto[:80]}" pero ningún ítem aborda esas palabras clave '
+                f'— revisar alineación entre propósito y actividades'
+            )
+        elif total_kw >= 4 and encontradas <= 1:
+            advertencias.append(
+                f'    {tag} ⚠️  Débil alineación Propósito↔ítems: solo {encontradas}/'
+                f'{total_kw} palabras clave del Propósito aparecen en las actividades '
+                f'("{proposito_texto[:60]}") — revisar coherencia'
+            )
+
+    # ── 2. Ítems genéricos ────────────────────────────────────────────────
+    for item in items:
+        if _FRASES_GENERICAS.match(item):
+            advertencias.append(
+                f'    {tag} ⚠️  Ítem genérico sin especificidad de contenido '
+                f'(indicar qué hace el estudiante y sobre qué tema/material): '
+                f'"{item[:90]}"'
+            )
+
+    # ── 3. Ítems demasiado breves ─────────────────────────────────────────
+    for item in items:
+        # Descontar el número si lo tiene
+        texto_item = re.sub(r'^\d+\.\s*', '', item).strip()
+        palabras = [w for w in texto_item.split() if w]
+        if 0 < len(palabras) < 4:
+            advertencias.append(
+                f'    {tag} ⚠️  Ítem muy breve ({len(palabras)} palabras) — '
+                f'especificar la actividad completa con objeto y contexto: '
+                f'"{item[:90]}"'
+            )
+
+    # ── 4. Verbos repetidos (monotonía cognitiva) ─────────────────────────
+    verbos_inicio = []
+    for item in items:
+        m = re.match(r'^(?:\d+\.\s+)?([a-záéíóúüñ]+)', item.lower())
+        if m:
+            verbos_inicio.append(m.group(1))
+    if len(verbos_inicio) >= 3:
+        conteo = Counter(verbos_inicio)
+        for verbo, cnt in conteo.items():
+            if cnt >= 3:
+                advertencias.append(
+                    f'    {tag} ⚠️  Verbo "{verbo}" se repite {cnt} veces en el bloque '
+                    f'— variar los verbos para mostrar progresión cognitiva '
+                    f'(Bloom: recordar → comprender → aplicar → analizar…)'
+                )
+
+    # ── 5. Entrega/producción en Preparación (incoherente) ───────────────
+    if 'preparac' in momento_lower:
+        texto_items_lower = ' '.join(items).lower()
+        if _VERBOS_INCOMPATIBLES_PREP.search(texto_items_lower):
+            advertencias.append(
+                f'    {tag} ⚠️  Ítem de entrega o producción en Preparación — '
+                f'las entregas deben ir en Desarrollo o Trabajo Independiente '
+                f'(Manual UST p.18)'
+            )
+
+    # ── 6. Trabajo Independiente sin producción concreta ─────────────────
+    if 'independ' in momento_lower:
+        texto_items_lower = ' '.join(items).lower()
+        tiene_produccion = any(v in texto_items_lower for v in _VERBOS_ENTREGA)
+        if not tiene_produccion:
+            advertencias.append(
+                f'    {tag} ⚠️  Trabajo Independiente sin actividad de entrega/producción '
+                f'— debe incluir al menos una acción concreta del estudiante '
+                f'(elabora, redacta, sube, publica…) (Manual UST p.20)'
+            )
+
+
 # Fuente base + Manual Diseño Instruccional UST (Res. N°481/24), Tabla 1 (p.19)
 _VERBOS_IMPERATIVO = {
     # A
@@ -2036,6 +2183,16 @@ def corregir_lenguaje_actividades(ws, log, registro=None):
                 f'    [Plan F{r} {str(momento)[:12]}] ⚠️  Falta "Propósito:" al final '
                 f'del bloque (estructura obligatoria: título + ítems + '
                 f'Propósito, Manual UST p.19)'
+            )
+
+        # i) Coherencia semántica: Propósito ↔ ítems, genéricos, breves,
+        #    verbos repetidos, incoherencias por tipo de momento
+        m_prop = re.search(r'Prop[oó]sito\s*:\s*(.+)', texto_nuevo, re.IGNORECASE)
+        proposito_extraido = m_prop.group(1).strip() if m_prop else None
+        if len(lineas_item) >= 1:
+            _analizar_coherencia_bloque(
+                titulo_bloque, proposito_extraido, lineas_item,
+                momento, r, advertencias
             )
 
     if advertencias:

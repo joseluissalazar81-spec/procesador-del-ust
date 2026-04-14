@@ -332,11 +332,15 @@ def tag(texto: str, tipo: str) -> str:
 #  CABECERA
 # ═════════════════════════════════════════════════════════════════════════
 
-st.markdown("""
+from datetime import datetime
+_ahora = datetime.now().strftime("%d/%m/%Y  %H:%M")
+
+st.markdown(f"""
 <div class="del-header">
   <h2>📋 Procesador de Planificaciones DEL</h2>
   <p class="sub">Universidad Santo Tomás · Dirección de Educación a Distancia</p>
   <span class="badge">Semestre 2026-1</span>
+  <span class="badge" style="margin-left:8px; opacity:0.85;">🕐 {_ahora}</span>
 </div>
 """, unsafe_allow_html=True)
 

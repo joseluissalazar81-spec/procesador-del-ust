@@ -3129,6 +3129,122 @@ def verificar_momentos(ws_plan, log):
     return len(oks), len(advertencias)
 
 
+# ── Patrones para validación de consignas de Foro (T4) ──────────────────────
+
+# Referencia a sesión sincrónica (no válido en e-learning asíncrono)
+_PAT_FORO_SESION = re.compile(
+    r'\b(?:trabajados?\s+en\s+(?:la\s+)?sesi[oó]n|vistos?\s+en\s+clase|'
+    r'comentados?\s+en\s+(?:la\s+)?sesi[oó]n|discutidos?\s+en\s+(?:la\s+)?sesi[oó]n|'
+    r'revisados?\s+en\s+(?:la\s+)?sesi[oó]n|seg[uú]n\s+(?:lo\s+)?visto\s+en\s+clase|'
+    r'a\s+partir\s+de\s+(?:lo\s+)?trabajado\s+en\s+(?:la\s+)?sesi[oó]n)\b',
+    re.IGNORECASE,
+)
+
+# Instrucción de participación entre pares (obligatoria en foros)
+_PAT_FORO_PARTICIPACION = re.compile(
+    r'\b(?:responde?\s+(?:al\s+menos|a\s+(?:un|dos|tres|\d+))\s+(?:compa[ñn]ero|participaci[oó]n)|'
+    r'comenta?\s+(?:al\s+menos|la\s+publicaci[oó]n)|'
+    r'interact[uú]a?\s+con|retroalimenta?|responde?\s+a\s+(?:dos|tres|\d+)|'
+    r'comenta?\s+(?:dos|tres|\d+))\b',
+    re.IGNORECASE,
+)
+
+# Criterio de evaluación explícito
+_PAT_FORO_CRITERIO = re.compile(
+    r'\b(?:criterio|r[uú]brica|se\s+evaluar[aá]|ser[aá]\s+evaluad|puntaje|'
+    r'se\s+considerar[aá]|se\s+valorar[aá]|indicador)\b',
+    re.IGNORECASE,
+)
+
+# Fuente citada en la consigna (apellido + año entre paréntesis)
+_PAT_FORO_CITA = re.compile(r'[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+\s+\(\d{4}\)')
+
+# Referencia APA completa al pie (línea que comienza con Apellido, I.)
+_PAT_FORO_REFERENCIA_APA = re.compile(
+    r'^[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+,\s+[A-Z]\.',
+    re.MULTILINE,
+)
+
+
+def verificar_consignas_foro(ws_plan, log):
+    """
+    Valida que cada celda de actividad asociada a un recurso Foro cumpla:
+    1. No referencie la sesión sincrónica (autonomía e-learning).
+    2. Incluya instrucción de participación entre pares.
+    3. Incluya criterio de evaluación explícito.
+    4. Si cita fuentes (Autor, año), incluya referencia APA 7 completa.
+
+    Devuelve (n_ok, n_advertencias).
+    """
+    if not ws_plan:
+        return 0, 0
+
+    adv = []
+    ok  = 0
+
+    for row in ws_plan.iter_rows(min_row=4, values_only=True):
+        recursos  = str(row[COL['RECURSOS']  - 1] or '').strip().lower()
+        actividad = str(row[COL['ACTIVIDAD'] - 1] or '').strip()
+        unidad    = str(row[COL['UNIDAD']    - 1] or '').strip()
+        semana    = str(row[COL['SEMANA']    - 1] or '').strip()
+
+        if 'foro' not in recursos:
+            continue
+        if not actividad or len(actividad) < 20:
+            continue
+
+        ref = f'Foro {("U"+unidad) if unidad else ""}{(" S"+semana) if semana else ""}'.strip()
+        problemas = []
+
+        # 1. Referencia a sesión sincrónica
+        if _PAT_FORO_SESION.search(actividad):
+            problemas.append(
+                'hace referencia a "la sesión" — la consigna debe ser autónoma '
+                '(el estudiante a distancia no asistió a clase)'
+            )
+
+        # 2. Instrucción de participación entre pares
+        if not _PAT_FORO_PARTICIPACION.search(actividad):
+            problemas.append(
+                'falta instrucción de participación entre pares '
+                '(ej: "Responde al menos a dos compañeros") — obligatorio en Foro T4'
+            )
+
+        # 3. Criterio de evaluación
+        if not _PAT_FORO_CRITERIO.search(actividad):
+            problemas.append(
+                'falta criterio de evaluación explícito '
+                '(qué hace la reflexión buena, no solo cuántas palabras)'
+            )
+
+        # 4. Cita sin referencia APA completa
+        citas = _PAT_FORO_CITA.findall(actividad)
+        if citas and not _PAT_FORO_REFERENCIA_APA.search(actividad):
+            autores = ', '.join(set(citas[:3]))
+            problemas.append(
+                f'cita fuente(s) ({autores}) pero no incluye referencia APA 7 completa al pie'
+            )
+
+        if problemas:
+            adv.append(f'    ⚠️  {ref} (Foro):')
+            for p in problemas:
+                adv.append(f'        → {p}')
+        else:
+            ok += 1
+
+    log.append('\n  [Verificación de consignas de Foro (T4)]')
+    if adv:
+        for a in adv:
+            log.append(a)
+    elif ok > 0:
+        log.append(f'    ✅ {ok} foro(s) con consigna completa')
+    else:
+        log.append('    —  No se detectaron recursos Foro en la planificación')
+
+    n_adv = len([a for a in adv if a.strip().startswith('⚠️')])
+    return ok, n_adv
+
+
 # ══════════════════════════════════════════════════════════════════════════
 #  REVISIÓN ORTOGRÁFICA Y GRAMATICAL — LanguageTool API (gratuita, es)
 # ══════════════════════════════════════════════════════════════════════════
@@ -3679,6 +3795,7 @@ def procesar_asignatura(carpeta_asig, dry_run=False, programa=None, es_as=False)
         n_mom_ok, n_mom_adv = verificar_momentos(
             wb['Planificación por unidades'], log
         )
+        verificar_consignas_foro(wb['Planificación por unidades'], log)
 
     # ── Revisión ortográfica/gramatical con LanguageTool ─────────────────
     if 'Planificación por unidades' in hojas and _LANGUAGETOOL_ACTIVO:

@@ -896,17 +896,17 @@ def aplicar_azul(cell):
 
 def aplicar_colores_evaluacion(ws):
     """
-    Colorea el fondo de filas según tipo de evaluación:
+    Colorea el fondo de las celdas de Estrategias evaluativas (columnas K–O)
+    según tipo de evaluación:
       Formativa / Formativo → lila pastel  (#E8D5F5)
       Sumativa              → amarillo pastel (#FFF2CC)
-    Se aplica después de todas las correcciones para no interferir con
-    el color de fuente azul de las celdas corregidas.
+    Solo se aplica a columnas 11–15 (K a O) para no afectar el resto de la fila.
     Las celdas fusionadas (MergedCell) se omiten para evitar errores.
     """
     from openpyxl.cell.cell import MergedCell
-    n_cols = ws.max_column or 15
-    for row in ws.iter_rows(min_row=4, max_col=n_cols):
-        r = row[0].row
+    COL_DESDE = 11   # K
+    COL_HASTA = 15   # O
+    for r in range(4, (ws.max_row or 4) + 1):
         tipo = ws.cell(r, COL['TIPO']).value
         if not tipo:
             continue
@@ -917,7 +917,8 @@ def aplicar_colores_evaluacion(ws):
             fill = _FILL_SUMATIVA
         else:
             continue
-        for cell in row:
+        for col_idx in range(COL_DESDE, COL_HASTA + 1):
+            cell = ws.cell(r, col_idx)
             if not isinstance(cell, MergedCell):
                 cell.fill = fill
 

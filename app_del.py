@@ -14,6 +14,8 @@ import streamlit as st
 import sys, os, glob, shutil, tempfile, re
 from io import BytesIO
 import db_historial as hist
+import validar_planificacion as vp
+import dict_ust
 
 # ── Configuración de página ───────────────────────────────────────────────
 st.set_page_config(
@@ -189,6 +191,29 @@ st.markdown("""
 
     /* ── Checkbox ── */
     .stCheckbox label { color: #004d26; font-weight: 500; }
+
+    /* ── Botones por instancia ── */
+    /* Instancia 1: verde institucional (base) */
+    div[data-testid="stTabs"] > div > div:nth-child(1) button[kind="primary"] {
+        background-color: #006633 !important;
+    }
+    div[data-testid="stTabs"] > div > div:nth-child(1) button[kind="primary"]:hover {
+        background-color: #004d26 !important;
+    }
+    /* Instancia 2: azul pizarra pastel */
+    div[data-testid="stTabs"] > div > div:nth-child(2) button[kind="primary"] {
+        background-color: #3B6FA0 !important;
+    }
+    div[data-testid="stTabs"] > div > div:nth-child(2) button[kind="primary"]:hover {
+        background-color: #2A5278 !important;
+    }
+    /* Instancia 3: lila pastel */
+    div[data-testid="stTabs"] > div > div:nth-child(3) button[kind="primary"] {
+        background-color: #7A5EA7 !important;
+    }
+    div[data-testid="stTabs"] > div > div:nth-child(3) button[kind="primary"]:hover {
+        background-color: #5E4580 !important;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -298,11 +323,12 @@ if not SCRIPT_OK:
 #  SELECTOR DE INSTANCIA
 # ═════════════════════════════════════════════════════════════════════════
 
-tab_i1, tab_i2, tab_i3, tab_hist = st.tabs([
+tab_i1, tab_i2, tab_i3, tab_hist, tab_dict = st.tabs([
     "Instancia 1 — Revisión previa al envío",
     "Instancia 2 — 1ª revisora DEL",
     "Instancia 3 — 2ª revisora / aprobación final",
     "📊 Historial",
+    "📖 Diccionario UST",
 ])
 
 # ═════════════════════════════════════════════════════════════════════════
@@ -360,6 +386,29 @@ with tab_i1:
                         )
     else:
         programa = {}
+
+    # ── Validaciones preventivas ──────────────────────────────────────────
+    if xlsx_file:
+        problemas = vp.validar_xlsx(xlsx_file.getvalue())
+        xlsx_file.seek(0)
+        errores   = [p for p in problemas if p["nivel"] == "error"]
+        advertencias = [p for p in problemas if p["nivel"] == "advertencia"]
+        if errores or advertencias:
+            with st.expander(
+                f"{'🔴' if errores else '🟡'} Validación previa — "
+                f"{len(errores)} error(es), {len(advertencias)} advertencia(s)",
+                expanded=bool(errores),
+            ):
+                for p in errores:
+                    st.error(f"**[{p['codigo']}]** {p['mensaje']}", icon="🔴")
+                for p in advertencias:
+                    st.warning(f"**[{p['codigo']}]** {p['mensaje']}", icon="⚠️")
+                if errores:
+                    st.caption(
+                        "Corrige los errores marcados en rojo antes de procesar."
+                    )
+        else:
+            st.success("Archivo validado sin problemas estructurales.", icon="✅")
 
     st.markdown("### 2 · Opciones")
     st.caption("Solo marcar si aplica a esta asignatura.")
@@ -901,3 +950,107 @@ with tab_hist:
             file_name="historial_del.csv",
             mime="text/csv",
         )
+
+# ═════════════════════════════════════════════════════════════════════════
+#  DICCIONARIO UST
+# ═════════════════════════════════════════════════════════════════════════
+
+with tab_dict:
+    st.markdown("### Diccionario UST personalizable")
+    st.caption(
+        "Las entradas base (en gris) vienen del script y no se pueden borrar desde aquí. "
+        "Las entradas personalizadas (en verde) se suman a las base y tienen prioridad."
+    )
+
+    completo = dict_ust.obtener_dict_completo()
+    custom   = dict_ust.obtener_entradas_custom()
+
+    # ── Ver diccionario completo ──────────────────────────────────────────
+    for mapa in dict_ust.MAPAS:
+        entradas = completo[mapa]
+        n_custom = len(custom.get(mapa, {}))
+        with st.expander(
+            f"**{dict_ust.etiqueta(mapa)}** — {len(entradas)} entradas "
+            f"({n_custom} personalizadas)",
+            expanded=False,
+        ):
+            import pandas as pd
+            filas = []
+            for inc, corr in sorted(entradas.items()):
+                es_custom = inc in custom.get(mapa, {})
+                filas.append({
+                    "Término incorrecto": inc,
+                    "→ Corrección":       corr,
+                    "Origen":             "✏️ Personalizada" if es_custom else "📋 Base",
+                })
+            if filas:
+                st.dataframe(pd.DataFrame(filas), use_container_width=True,
+                             hide_index=True)
+
+    st.divider()
+
+    # ── Agregar nueva entrada ─────────────────────────────────────────────
+    st.markdown("#### Agregar entrada")
+    col_m, col_i, col_c = st.columns([2, 3, 3])
+    with col_m:
+        mapa_sel = st.selectbox(
+            "Mapa",
+            dict_ust.MAPAS,
+            format_func=dict_ust.etiqueta,
+            key="dict_mapa",
+        )
+    with col_i:
+        nuevo_inc  = st.text_input("Término incorrecto", key="dict_inc",
+                                   placeholder="ej: Examen")
+    with col_c:
+        nuevo_corr = st.text_input("Corrección UST",     key="dict_corr",
+                                   placeholder="ej: Pruebas escritas u orales")
+
+    if st.button("➕ Agregar al diccionario", key="btn_dict_add"):
+        if nuevo_inc.strip() and nuevo_corr.strip():
+            dict_ust.agregar_entrada(mapa_sel, nuevo_inc, nuevo_corr)
+            st.success(f"Entrada agregada: «{nuevo_inc}» → «{nuevo_corr}»")
+            st.rerun()
+        else:
+            st.warning("Completa ambos campos antes de agregar.")
+
+    st.divider()
+
+    # ── Eliminar entrada personalizada ────────────────────────────────────
+    st.markdown("#### Eliminar entrada personalizada")
+    todas_custom = [
+        (mapa, inc)
+        for mapa in dict_ust.MAPAS
+        for inc in custom.get(mapa, {})
+    ]
+    if todas_custom:
+        opciones = [f"{dict_ust.etiqueta(m)} → «{i}»" for m, i in todas_custom]
+        sel_idx  = st.selectbox("Selecciona entrada a eliminar", range(len(opciones)),
+                                format_func=lambda i: opciones[i], key="dict_del_sel")
+        if st.button("🗑 Eliminar", key="btn_dict_del", type="secondary"):
+            mapa_d, inc_d = todas_custom[sel_idx]
+            dict_ust.eliminar_entrada(mapa_d, inc_d)
+            st.success(f"Entrada «{inc_d}» eliminada.")
+            st.rerun()
+    else:
+        st.caption("No hay entradas personalizadas para eliminar.")
+
+    st.divider()
+
+    # ── Exportar / Importar ───────────────────────────────────────────────
+    st.markdown("#### Exportar / Importar")
+    col_exp, col_imp = st.columns(2)
+    with col_exp:
+        st.download_button(
+            "⬇ Exportar diccionario (.json)",
+            data=dict_ust.exportar_json(),
+            file_name="dict_ust.json",
+            mime="application/json",
+        )
+    with col_imp:
+        json_up = st.file_uploader("⬆ Importar diccionario (.json)",
+                                   type="json", key="dict_import")
+        if json_up:
+            n = dict_ust.importar_json(json_up.getvalue())
+            st.success(f"{n} entrada(s) importadas correctamente.")
+            st.rerun()

@@ -16,6 +16,7 @@ from io import BytesIO
 import db_historial as hist
 import validar_planificacion as vp
 import dict_ust
+import apa_recursos as apa
 
 # ── Configuración de página ───────────────────────────────────────────────
 st.set_page_config(
@@ -448,6 +449,27 @@ with tab_i1:
              "Los cambios se marcan en azul en el archivo descargado.",
     )
 
+    st.markdown("**Referencias bibliográficas (columna H)**")
+    col_apa1, col_apa2 = st.columns(2)
+    with col_apa1:
+        usar_apa_i1 = st.checkbox(
+            "📚 Validar referencias APA 7",
+            value=True,
+            key="i1_apa",
+            help="Verifica que las referencias de la columna H cumplan APA 7: "
+                 "formato de autor, año entre paréntesis, & entre autores, "
+                 "URL sin 'Disponible en', etc.",
+        )
+    with col_apa2:
+        autocorr_apa_i1 = st.checkbox(
+            "✍️ Corregir APA automáticamente",
+            value=False,
+            key="i1_apa_corr",
+            help="Aplica correcciones APA 7 seguras: elimina 'Disponible en', "
+                 "'y' → '&' entre autores, punto tras año, etc. "
+                 "Los cambios se marcan en azul.",
+        )
+
     st.markdown("### 3 · Revisar")
 
     listo_i1 = bool(pdf_file and xlsx_file)
@@ -499,6 +521,22 @@ with tab_i1:
                 if ok:
                     salidas = glob.glob(os.path.join(carpeta_asig, "Revisado", "*.xlsx"))
                     if salidas:
+                        # ── APA 7 en columna H ──────────────────────────
+                        if usar_apa_i1:
+                            import openpyxl as _oxl
+                            _wb_apa = _oxl.load_workbook(salidas[0])
+                            if "Planificación por unidades" in _wb_apa.sheetnames:
+                                _ws_apa = _wb_apa["Planificación por unidades"]
+                                _apa_log, _apa_probs, _apa_corr = \
+                                    apa.revisar_columna_recursos(
+                                        _ws_apa,
+                                        autocorregir=autocorr_apa_i1,
+                                    )
+                                log.extend(_apa_log)
+                                if autocorr_apa_i1 and _apa_corr:
+                                    _wb_apa.save(salidas[0])
+                            _wb_apa.close()
+                        # ────────────────────────────────────────────────
                         with open(salidas[0], "rb") as f:
                             output_bytes = f.read()
                         output_name = os.path.basename(salidas[0])
@@ -544,6 +582,43 @@ with tab_i1:
                     delta="revisar" if metricas["discrepancias_prog"] else "todo coincide",
                     delta_color="inverse" if metricas["discrepancias_prog"] else "normal",
                 )
+
+            # ── Métricas APA ────────────────────────────────────────────
+            if usar_apa_i1:
+                _apa_probs_log = sum(
+                    1 for l in log
+                    if "[APA_" in l and ("❌" in l or "⚠️" in l)
+                )
+                _apa_corr_log = sum(
+                    1 for l in log if l.strip().startswith("✏️") and "Fila" in l
+                )
+                col_a1, col_a2 = st.columns(2)
+                with col_a1:
+                    st.metric(
+                        "Problemas APA 7 (col. H)",
+                        _apa_probs_log,
+                        delta="revisar referencias" if _apa_probs_log else "referencias OK",
+                        delta_color="inverse" if _apa_probs_log else "normal",
+                        help="Errores y advertencias detectados en columna H.",
+                    )
+                with col_a2:
+                    st.metric(
+                        "Correcciones APA aplicadas",
+                        _apa_corr_log,
+                        help="Cambios APA 7 seguros aplicados en columna H.",
+                    )
+                # Detalle APA en expander
+                _apa_detalle = [
+                    l for l in log
+                    if "APA" in l or ("Fila" in l and "H" in l and "✏️" in l)
+                ]
+                if _apa_detalle:
+                    with st.expander(
+                        f"📚 Detalle APA 7 — columna H ({_apa_probs_log} problema(s))",
+                        expanded=_apa_probs_log > 0,
+                    ):
+                        for linea in _apa_detalle:
+                            st.markdown(linea)
 
             if metricas["tiene_as"]:
                 st.markdown("**Verificación A+Se:**")
@@ -1054,3 +1129,34 @@ with tab_dict:
             n = dict_ust.importar_json(json_up.getvalue())
             st.success(f"{n} entrada(s) importadas correctamente.")
             st.rerun()
+
+    st.divider()
+
+    # ── Generador de referencia APA 7 desde URL / DOI ─────────────────────
+    st.markdown("#### Generar referencia APA 7 desde URL o DOI")
+    st.caption(
+        "Ingresa una URL o DOI para generar automáticamente la referencia APA 7. "
+        "Requiere conexión a internet. Revisa el resultado antes de usarlo."
+    )
+
+    url_input = st.text_input(
+        "URL o DOI",
+        key="apa_url_input",
+        placeholder="https://doi.org/10.1016/... o https://www.sitio.cl/articulo",
+    )
+
+    if st.button("🔍 Generar referencia", key="btn_apa_gen"):
+        if url_input.strip():
+            with st.spinner("Consultando metadatos..."):
+                ref_gen, estado = apa.generar_desde_url(url_input.strip())
+            if ref_gen:
+                st.success(f"Referencia generada ({estado}):")
+                st.code(ref_gen, language=None)
+                st.caption(
+                    "Copia esta referencia y pégala en la columna H del Excel. "
+                    "Verifica que el año, nombre de autores y tipo de recurso sean correctos."
+                )
+            else:
+                st.warning(f"No se pudo generar la referencia: {estado}")
+        else:
+            st.warning("Ingresa una URL o DOI para continuar.")

@@ -194,67 +194,45 @@ st.markdown("""
     /* ── Checkbox ── */
     .stCheckbox label { color: #004d26; font-weight: 500; }
 
-    /* ── Botones por instancia (colores pasteles institucionales) ── */
-    /* Instancia 1 — verde menta pastel */
-    div[data-testid="stTabs"] > div > div:nth-child(1) button[kind="primary"],
-    div[data-testid="stTabs"] > div > div:nth-child(1) button[data-testid="baseButton-primary"] {
-        background-color: #4A9068 !important;
-        border-color:     #4A9068 !important;
+    /* ── Botones por instancia — via wrappers con id ── */
+    #btn-i1 button, #btn-i1 button[data-testid="baseButton-primary"],
+    #btn-i1 button[data-testid="baseButton-disabled"] {
+        background-color: #4A9068 !important; border-color: #4A9068 !important;
+        color: #fff !important;
     }
-    div[data-testid="stTabs"] > div > div:nth-child(1) button[kind="primary"]:hover,
-    div[data-testid="stTabs"] > div > div:nth-child(1) button[data-testid="baseButton-primary"]:hover {
-        background-color: #357a52 !important;
+    #btn-i1 button:hover { background-color: #357a52 !important; }
+
+    #btn-i2 button, #btn-i2 button[data-testid="baseButton-primary"],
+    #btn-i2 button[data-testid="baseButton-disabled"] {
+        background-color: #4A7FA5 !important; border-color: #4A7FA5 !important;
+        color: #fff !important;
     }
-    /* Instancia 2 — azul cielo pastel */
-    div[data-testid="stTabs"] > div > div:nth-child(2) button[kind="primary"],
-    div[data-testid="stTabs"] > div > div:nth-child(2) button[data-testid="baseButton-primary"] {
-        background-color: #4A7FA5 !important;
-        border-color:     #4A7FA5 !important;
+    #btn-i2 button:hover { background-color: #356488 !important; }
+
+    #btn-i3 button, #btn-i3 button[data-testid="baseButton-primary"],
+    #btn-i3 button[data-testid="baseButton-disabled"] {
+        background-color: #8B6EAF !important; border-color: #8B6EAF !important;
+        color: #fff !important;
     }
-    div[data-testid="stTabs"] > div > div:nth-child(2) button[kind="primary"]:hover,
-    div[data-testid="stTabs"] > div > div:nth-child(2) button[data-testid="baseButton-primary"]:hover {
-        background-color: #356488 !important;
+    #btn-i3 button:hover { background-color: #70578f !important; }
+
+    #btn-hist button, #btn-hist button[data-testid="baseButton-primary"] {
+        background-color: #C07A3A !important; border-color: #C07A3A !important;
+        color: #fff !important;
     }
-    /* Instancia 3 — violeta lavanda pastel */
-    div[data-testid="stTabs"] > div > div:nth-child(3) button[kind="primary"],
-    div[data-testid="stTabs"] > div > div:nth-child(3) button[data-testid="baseButton-primary"] {
-        background-color: #8B6EAF !important;
-        border-color:     #8B6EAF !important;
+    #btn-hist button:hover { background-color: #a0622c !important; }
+
+    #btn-dict button, #btn-dict button[data-testid="baseButton-primary"] {
+        background-color: #5A7A8A !important; border-color: #5A7A8A !important;
+        color: #fff !important;
     }
-    div[data-testid="stTabs"] > div > div:nth-child(3) button[kind="primary"]:hover,
-    div[data-testid="stTabs"] > div > div:nth-child(3) button[data-testid="baseButton-primary"]:hover {
-        background-color: #70578f !important;
+    #btn-dict button:hover { background-color: #456070 !important; }
+
+    #btn-nueva button {
+        background-color: #6c757d !important; border-color: #6c757d !important;
+        color: #fff !important; border-radius: 8px !important;
     }
-    /* Historial — naranja tostado pastel */
-    div[data-testid="stTabs"] > div > div:nth-child(4) button[kind="primary"],
-    div[data-testid="stTabs"] > div > div:nth-child(4) button[data-testid="baseButton-primary"] {
-        background-color: #C07A3A !important;
-        border-color:     #C07A3A !important;
-    }
-    div[data-testid="stTabs"] > div > div:nth-child(4) button[kind="primary"]:hover,
-    div[data-testid="stTabs"] > div > div:nth-child(4) button[data-testid="baseButton-primary"]:hover {
-        background-color: #a0622c !important;
-    }
-    /* Diccionario UST — gris azulado pastel */
-    div[data-testid="stTabs"] > div > div:nth-child(5) button[kind="primary"],
-    div[data-testid="stTabs"] > div > div:nth-child(5) button[data-testid="baseButton-primary"] {
-        background-color: #5A7A8A !important;
-        border-color:     #5A7A8A !important;
-    }
-    div[data-testid="stTabs"] > div > div:nth-child(5) button[kind="primary"]:hover,
-    div[data-testid="stTabs"] > div > div:nth-child(5) button[data-testid="baseButton-primary"]:hover {
-        background-color: #456070 !important;
-    }
-    /* Botón 🔄 Nueva — gris neutro */
-    div[data-testid="stHorizontalBlock"] button:not([kind="primary"]) {
-        background-color: #6c757d !important;
-        border-color:     #6c757d !important;
-        color:            #ffffff !important;
-        border-radius:    8px !important;
-    }
-    div[data-testid="stHorizontalBlock"] button:not([kind="primary"]):hover {
-        background-color: #545b62 !important;
-    }
+    #btn-nueva button:hover { background-color: #545b62 !important; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -363,9 +341,11 @@ if not SCRIPT_OK:
 # ── Botón de limpieza ─────────────────────────────────────────────────────
 _col_sp, _col_btn = st.columns([6, 1])
 with _col_btn:
+    st.markdown('<div id="btn-nueva">', unsafe_allow_html=True)
     if st.button("🔄 Nueva", help="Limpia todos los archivos y resultados para procesar otra planificación", use_container_width=True):
         st.session_state.clear()
         st.rerun()
+    st.markdown('</div>', unsafe_allow_html=True)
 
 # ═════════════════════════════════════════════════════════════════════════
 #  SELECTOR DE INSTANCIA
@@ -574,6 +554,7 @@ with tab_i1:
     st.markdown("### 3 · Revisar")
 
     listo_i1 = bool(pdf_file and xlsx_file)
+    st.markdown('<div id="btn-i1">', unsafe_allow_html=True)
     procesar_i1 = st.button(
         "▶ Revisar planificación",
         disabled=not listo_i1,
@@ -582,6 +563,7 @@ with tab_i1:
         use_container_width=True,
         help="Sube el PDF y el .xlsx para activar este botón." if not listo_i1 else "",
     )
+    st.markdown('</div>', unsafe_allow_html=True)
 
     if not listo_i1:
         st.caption("⬆ Sube el PDF del programa y la planificación .xlsx para continuar.")
@@ -963,6 +945,7 @@ def _render_instancia_escala(tab, instancia_num, key_prefix):
         st.markdown(f"### 3 · Aplicar correcciones")
 
         listo_x = bool(escala_f and plan_f)
+        st.markdown(f'<div id="btn-{key_prefix}">', unsafe_allow_html=True)
         procesar_x = st.button(
             f"▶ Aplicar correcciones (Instancia {instancia_num})",
             disabled=not listo_x,
@@ -972,6 +955,7 @@ def _render_instancia_escala(tab, instancia_num, key_prefix):
             help="Sube la escala y la planificación para activar."
                  if not listo_x else "",
         )
+        st.markdown('</div>', unsafe_allow_html=True)
         if not listo_x:
             st.caption("⬆ Sube la escala completada y la planificación para continuar.")
 
@@ -1184,12 +1168,16 @@ with tab_hist:
         # ── Exportar CSV ────────────────────────────────────────────────
         st.divider()
         csv_bytes = df.to_csv(index=False).encode("utf-8")
+        st.markdown('<div id="btn-hist">', unsafe_allow_html=True)
         st.download_button(
             "⬇ Exportar historial completo (.csv)",
             data=csv_bytes,
             file_name="historial_del.csv",
             mime="text/csv",
+            type="primary",
+            use_container_width=True,
         )
+        st.markdown('</div>', unsafe_allow_html=True)
 
 # ═════════════════════════════════════════════════════════════════════════
 #  DICCIONARIO UST
@@ -1246,13 +1234,15 @@ with tab_dict:
         nuevo_corr = st.text_input("Corrección UST",     key="dict_corr",
                                    placeholder="ej: Pruebas escritas u orales")
 
-    if st.button("➕ Agregar al diccionario", key="btn_dict_add"):
+    st.markdown('<div id="btn-dict">', unsafe_allow_html=True)
+    if st.button("➕ Agregar al diccionario", key="btn_dict_add", type="primary", use_container_width=True):
         if nuevo_inc.strip() and nuevo_corr.strip():
             dict_ust.agregar_entrada(mapa_sel, nuevo_inc, nuevo_corr)
             st.success(f"Entrada agregada: «{nuevo_inc}» → «{nuevo_corr}»")
             st.rerun()
         else:
             st.warning("Completa ambos campos antes de agregar.")
+    st.markdown('</div>', unsafe_allow_html=True)
 
     st.divider()
 

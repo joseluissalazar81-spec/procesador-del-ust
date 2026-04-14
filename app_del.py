@@ -11,6 +11,7 @@ Desplegar en Streamlit Cloud:
 """
 
 import streamlit as st
+import streamlit.components.v1 as components
 import sys, os, glob, shutil, tempfile, re
 from io import BytesIO
 import db_historial as hist
@@ -194,45 +195,7 @@ st.markdown("""
     /* ── Checkbox ── */
     .stCheckbox label { color: #004d26; font-weight: 500; }
 
-    /* ── Botones por instancia — marcador :has() ── */
-    /* El marcador <div id="btn-X"> es hermano del div del botón;
-       :has() selecciona el contenedor padre que contiene el marcador,
-       luego ~ busca el div del botón en el mismo nivel.            */
-    div:has(> #btn-i1) ~ div button {
-        background-color: #4A9068 !important; border-color: #4A9068 !important;
-        color: #fff !important;
-    }
-    div:has(> #btn-i1) ~ div button:hover { background-color: #357a52 !important; }
-
-    div:has(> #btn-i2) ~ div button {
-        background-color: #4A7FA5 !important; border-color: #4A7FA5 !important;
-        color: #fff !important;
-    }
-    div:has(> #btn-i2) ~ div button:hover { background-color: #356488 !important; }
-
-    div:has(> #btn-i3) ~ div button {
-        background-color: #8B6EAF !important; border-color: #8B6EAF !important;
-        color: #fff !important;
-    }
-    div:has(> #btn-i3) ~ div button:hover { background-color: #70578f !important; }
-
-    div:has(> #btn-hist) ~ div button {
-        background-color: #C07A3A !important; border-color: #C07A3A !important;
-        color: #fff !important;
-    }
-    div:has(> #btn-hist) ~ div button:hover { background-color: #a0622c !important; }
-
-    div:has(> #btn-dict) ~ div button {
-        background-color: #5A7A8A !important; border-color: #5A7A8A !important;
-        color: #fff !important;
-    }
-    div:has(> #btn-dict) ~ div button:hover { background-color: #456070 !important; }
-
-    div:has(> #btn-nueva) ~ div button {
-        background-color: #6c757d !important; border-color: #6c757d !important;
-        color: #fff !important; border-radius: 8px !important;
-    }
-    div:has(> #btn-nueva) ~ div button:hover { background-color: #545b62 !important; }
+    /* colores de botones: aplicados via JS (components.html) */
 </style>
 """, unsafe_allow_html=True)
 
@@ -334,6 +297,53 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
+# ── Colores de botones vía JS (CSS no puede atravesar el DOM de Streamlit) ──
+components.html("""
+<script>
+(function () {
+    var COLOR_MAP = [
+        { label: 'Revisar planificación',             bg: '#4A9068', hov: '#357a52' },
+        { label: 'Aplicar correcciones (Instancia 2)',bg: '#4A7FA5', hov: '#356488' },
+        { label: 'Aplicar correcciones (Instancia 3)',bg: '#8B6EAF', hov: '#70578f' },
+        { label: 'Exportar historial',                bg: '#C07A3A', hov: '#a0622c' },
+        { label: 'Agregar al diccionario',            bg: '#5A7A8A', hov: '#456070' },
+        { label: 'Nueva',                             bg: '#6c757d', hov: '#545b62' },
+    ];
+    var done = new WeakSet();
+
+    function paint() {
+        try {
+            var doc = window.parent.document;
+            doc.querySelectorAll('button').forEach(function (btn) {
+                if (done.has(btn)) return;
+                var txt = (btn.innerText || btn.textContent || '').trim();
+                COLOR_MAP.forEach(function (c) {
+                    if (txt.indexOf(c.label) !== -1) {
+                        btn.style.setProperty('background-color', c.bg, 'important');
+                        btn.style.setProperty('border-color',     c.bg, 'important');
+                        btn.style.setProperty('color',            '#ffffff', 'important');
+                        btn.addEventListener('mouseenter', function () {
+                            btn.style.setProperty('background-color', c.hov, 'important');
+                        });
+                        btn.addEventListener('mouseleave', function () {
+                            btn.style.setProperty('background-color', c.bg, 'important');
+                        });
+                        done.add(btn);
+                    }
+                });
+            });
+        } catch (e) { /* cross-origin bloqueado — silencioso */ }
+    }
+
+    paint();
+    new MutationObserver(paint).observe(
+        window.parent.document.body,
+        { childList: true, subtree: true }
+    );
+})();
+</script>
+""", height=0, scrolling=False)
+
 if not SCRIPT_OK:
     st.error("No se encontró `revisar_planificaciones.py` en la misma carpeta que esta app.")
     st.stop()
@@ -341,7 +351,6 @@ if not SCRIPT_OK:
 # ── Botón de limpieza ─────────────────────────────────────────────────────
 _col_sp, _col_btn = st.columns([6, 1])
 with _col_btn:
-    st.markdown('<div id="btn-nueva"></div>', unsafe_allow_html=True)
     if st.button("🔄 Nueva", help="Limpia todos los archivos y resultados para procesar otra planificación", use_container_width=True):
         st.session_state.clear()
         st.rerun()
@@ -553,7 +562,6 @@ with tab_i1:
     st.markdown("### 3 · Revisar")
 
     listo_i1 = bool(pdf_file and xlsx_file)
-    st.markdown('<div id="btn-i1"></div>', unsafe_allow_html=True)
     procesar_i1 = st.button(
         "▶ Revisar planificación",
         disabled=not listo_i1,
@@ -943,7 +951,6 @@ def _render_instancia_escala(tab, instancia_num, key_prefix):
         st.markdown(f"### 3 · Aplicar correcciones")
 
         listo_x = bool(escala_f and plan_f)
-        st.markdown(f'<div id="btn-{key_prefix}"></div>', unsafe_allow_html=True)
         procesar_x = st.button(
             f"▶ Aplicar correcciones (Instancia {instancia_num})",
             disabled=not listo_x,
@@ -1165,7 +1172,6 @@ with tab_hist:
         # ── Exportar CSV ────────────────────────────────────────────────
         st.divider()
         csv_bytes = df.to_csv(index=False).encode("utf-8")
-        st.markdown('<div id="btn-hist"></div>', unsafe_allow_html=True)
         st.download_button(
             "⬇ Exportar historial completo (.csv)",
             data=csv_bytes,
@@ -1230,7 +1236,6 @@ with tab_dict:
         nuevo_corr = st.text_input("Corrección UST",     key="dict_corr",
                                    placeholder="ej: Pruebas escritas u orales")
 
-    st.markdown('<div id="btn-dict"></div>', unsafe_allow_html=True)
     if st.button("➕ Agregar al diccionario", key="btn_dict_add", type="primary", use_container_width=True):
         if nuevo_inc.strip() and nuevo_corr.strip():
             dict_ust.agregar_entrada(mapa_sel, nuevo_inc, nuevo_corr)

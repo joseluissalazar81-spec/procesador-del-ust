@@ -374,21 +374,50 @@ def tag(texto: str, tipo: str) -> str:
 #  CABECERA
 # ═════════════════════════════════════════════════════════════════════════
 
-from datetime import datetime
-_ahora = datetime.now().strftime("%d/%m/%Y  %H:%M")
-
-st.markdown(f"""
-<div style="position:fixed;top:12px;right:20px;z-index:9999;
-            background:rgba(255,255,255,0.92);backdrop-filter:blur(8px);
-            border:1.5px solid #C8E6D4;border-radius:12px;
-            padding:7px 18px;box-shadow:0 2px 12px rgba(0,102,51,0.13);">
-  <div style="font-size:0.68rem;font-weight:600;color:#009450;
-              letter-spacing:0.08em;text-transform:uppercase;line-height:1;">EN VIVO</div>
-  <div style="font-size:1.45rem;font-weight:700;color:#004d26;
-              letter-spacing:-0.01em;line-height:1.2;margin-top:1px;">
-    {_ahora}
-  </div>
+components.html("""
+<style>
+  #del-reloj {
+    position:fixed;top:12px;right:20px;z-index:9999;
+    background:rgba(255,255,255,0.92);backdrop-filter:blur(8px);
+    border:1.5px solid #C8E6D4;border-radius:12px;
+    padding:7px 18px;box-shadow:0 2px 12px rgba(0,102,51,0.13);
+    font-family:'Inter',sans-serif;
+  }
+  #del-reloj .lbl { font-size:0.68rem;font-weight:600;color:#009450;
+    letter-spacing:0.08em;text-transform:uppercase;line-height:1; }
+  #del-reloj .fecha { font-size:0.72rem;font-weight:500;color:#555;
+    line-height:1.3;margin-top:3px; }
+  #del-reloj .hora { font-size:1.45rem;font-weight:700;color:#004d26;
+    letter-spacing:-0.01em;line-height:1.2;margin-top:1px; }
+</style>
+<div id="del-reloj">
+  <div class="lbl">EN VIVO</div>
+  <div class="fecha" id="del-fecha"></div>
+  <div class="hora"  id="del-hora"></div>
 </div>
+<script>
+(function() {
+  var DIAS  = ['domingo','lunes','martes','miércoles','jueves','viernes','sábado'];
+  var MESES = ['enero','febrero','marzo','abril','mayo','junio',
+               'julio','agosto','septiembre','octubre','noviembre','diciembre'];
+  function tick() {
+    var n = new Date();
+    var dia   = DIAS[n.getDay()];
+    var fecha = dia.charAt(0).toUpperCase()+dia.slice(1)+' '+
+                n.getDate()+' de '+MESES[n.getMonth()]+' '+n.getFullYear();
+    var hora  = String(n.getHours()).padStart(2,'0')+':'+
+                String(n.getMinutes()).padStart(2,'0')+':'+
+                String(n.getSeconds()).padStart(2,'0');
+    document.getElementById('del-fecha').textContent = fecha;
+    document.getElementById('del-hora').textContent  = hora;
+  }
+  tick();
+  setInterval(tick, 1000);
+})();
+</script>
+""", height=0)
+
+st.markdown("""
 <div class="del-header">
   <h2>📋 Procesador de Planificaciones DEL</h2>
   <p class="sub">Universidad Santo Tomás · Dirección de Educación a Distancia</p>

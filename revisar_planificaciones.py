@@ -894,6 +894,51 @@ def aplicar_azul(cell):
                      italic=f.italic, underline=f.underline, color=_AZUL_FUENTE)
 
 
+def aplicar_azul_diff(cell, texto_original: str, texto_nuevo: str):
+    """
+    Para celdas multi-línea (col G): aplica fuente azul SOLO a las líneas
+    que cambiaron entre texto_original y texto_nuevo.
+    Las líneas sin cambios conservan su color original.
+    Requiere openpyxl >= 3.1 (CellRichText). Si no está disponible, colorea toda la celda.
+    """
+    import difflib
+    try:
+        from openpyxl.cell.rich_text import CellRichText, TextBlock
+        from openpyxl.cell.text import InlineFont
+    except ImportError:
+        aplicar_azul(cell)
+        return
+
+    f = cell.font
+    try:
+        orig_color = (f.color.rgb if f.color and f.color.type == 'rgb' else '000000')
+    except Exception:
+        orig_color = '000000'
+
+    lineas_orig = texto_original.split('\n')
+    lineas_new  = texto_nuevo.split('\n')
+
+    # Detectar qué líneas cambiaron
+    sm = difflib.SequenceMatcher(None, lineas_orig, lineas_new, autojunk=False)
+    cambiadas = set()
+    for tag, i1, i2, j1, j2 in sm.get_opcodes():
+        if tag != 'equal':
+            for idx in range(j1, j2):
+                cambiadas.add(idx)
+
+    # Construir rich text: líneas cambiadas → azul, resto → color original
+    rt = CellRichText()
+    for i, linea in enumerate(lineas_new):
+        segmento = linea + ('\n' if i < len(lineas_new) - 1 else '')
+        color    = _AZUL_FUENTE if i in cambiadas else orig_color
+        rt.append(TextBlock(
+            InlineFont(rFont=f.name or 'Calibri', b=f.bold, i=f.italic, color=color),
+            segmento,
+        ))
+
+    cell.value = rt
+
+
 def aplicar_colores_evaluacion(ws):
     """
     Colorea el fondo de las celdas de Estrategias evaluativas (columnas K–O)
@@ -2497,7 +2542,7 @@ def corregir_lenguaje_actividades(ws, log, registro=None):
         # ── Aplicar cambios si los hubo ───────────────────────────────────
         if texto_nuevo != texto:
             cell.value = texto_nuevo
-            aplicar_azul(cell)
+            aplicar_azul_diff(cell, texto, texto_nuevo)  # azul solo en líneas modificadas
             resumen_cambios = '; '.join(cambios_celda)
             for c in cambios_celda:
                 log.append(f'    [Plan F{r}] Lenguaje actividad: {c}')
@@ -3309,7 +3354,7 @@ def verificar_lenguaje_momentos(ws_plan, log, autocorregir=False):
             if cambios:
                 # Aplicar correcciones a la celda
                 cell_act.value = texto_corr
-                aplicar_azul(cell_act)
+                aplicar_azul_diff(cell_act, texto, texto_corr)  # azul solo en líneas modificadas
                 n_correcciones += len(cambios)
 
                 for cambio in cambios:

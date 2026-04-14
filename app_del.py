@@ -280,16 +280,42 @@ def parsear_log(log: list[str]) -> dict:
     return resultado
 
 
-def _nombre_descarga(programa: dict | None, instancia: int) -> str:
+def _datos_desde_xlsx(xlsx_bytes: bytes) -> dict:
+    """Lee código y nombre de asignatura desde la hoja Síntesis didáctica del Excel."""
+    try:
+        import openpyxl as _oxl
+        wb = _oxl.load_workbook(BytesIO(xlsx_bytes), read_only=True, data_only=True)
+        ws = next(
+            (wb[s] for s in wb.sheetnames
+             if 'síntesis' in s.lower() or 'sintesis' in s.lower()),
+            None
+        )
+        if ws is None:
+            return {}
+        codigo     = str(ws.cell(7, 1).value or "").strip()
+        asignatura = str(ws.cell(4, 4).value or "").strip()
+        wb.close()
+        return {"codigo": codigo or None, "asignatura": asignatura or None}
+    except Exception:
+        return {}
+
+
+def _nombre_descarga(programa: dict | None, instancia: int,
+                     xlsx_bytes: bytes | None = None) -> str:
     """
     Genera el nombre del archivo de descarga:
       {CODIGO}_{Nombre_Asignatura}_Revisado_I{N}.xlsx
-    Si no hay programa, usa solo Revisado_I{N}.xlsx
+    Primero lee del dict programa (PDF); si falta algo usa el Excel como fallback.
     """
-    prog = programa or {}
+    prog = dict(programa or {})
+    # Fallback al Excel si el programa no tiene código o nombre
+    if xlsx_bytes and (not prog.get("codigo") or not prog.get("asignatura")):
+        xlsx_datos = _datos_desde_xlsx(xlsx_bytes)
+        prog.setdefault("codigo",     xlsx_datos.get("codigo"))
+        prog.setdefault("asignatura", xlsx_datos.get("asignatura"))
+
     codigo = (prog.get("codigo") or "").strip()
     nombre = (prog.get("asignatura") or "").strip()
-    # Limpiar caracteres no válidos para nombre de archivo
     nombre_limpio = re.sub(r'[\\/:*?"<>|]', '', nombre).strip()
     nombre_limpio = re.sub(r'\s+', '_', nombre_limpio)
     partes = [p for p in [codigo, nombre_limpio] if p]
@@ -663,7 +689,7 @@ with tab_i1:
                         # ────────────────────────────────────────────────
                         with open(salidas[0], "rb") as f:
                             output_bytes = f.read()
-                        output_name = _nombre_descarga(programa, 1)
+                        output_name = _nombre_descarga(programa, 1, output_bytes)
 
         st.divider()
         st.markdown("### Resultados")
@@ -996,7 +1022,7 @@ def _render_instancia_escala(tab, instancia_num, key_prefix):
                     instancia_num=instancia_num,
                 )
                 if ok_x:
-                    out_name_x = _nombre_descarga(programa_x, instancia_num)
+                    out_name_x = _nombre_descarga(programa_x, instancia_num, out_bytes_x)
 
             st.divider()
             st.markdown("### Resultados")

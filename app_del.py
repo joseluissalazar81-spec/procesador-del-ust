@@ -17,6 +17,7 @@ import db_historial as hist
 import validar_planificacion as vp
 import dict_ust
 import apa_recursos as apa
+import apa_llm
 
 # ── Configuración de página ───────────────────────────────────────────────
 st.set_page_config(
@@ -453,7 +454,7 @@ with tab_i1:
     col_apa1, col_apa2 = st.columns(2)
     with col_apa1:
         usar_apa_i1 = st.checkbox(
-            "📚 Validar referencias APA 7",
+            "📚 Validar referencias APA 7 (reglas)",
             value=True,
             key="i1_apa",
             help="Verifica que las referencias de la columna H cumplan APA 7: "
@@ -469,6 +470,60 @@ with tab_i1:
                  "'y' → '&' entre autores, punto tras año, etc. "
                  "Los cambios se marcan en azul.",
         )
+
+    # ── Revisión APA con LLM ──────────────────────────────────────────────
+    with st.expander("🤖 Revisión APA 7 con LLM (más precisa)", expanded=False):
+        st.caption(
+            "Usa un modelo de lenguaje para revisar y corregir referencias APA 7 "
+            "con mayor profundidad que las reglas automáticas. "
+            "Ollama es gratuito y corre localmente."
+        )
+
+        col_llm1, col_llm2 = st.columns([2, 2])
+        with col_llm1:
+            usar_llm_i1 = st.checkbox(
+                "Activar revisión LLM",
+                value=False,
+                key="i1_llm_activo",
+            )
+            backend_i1 = st.selectbox(
+                "Backend",
+                apa_llm.BACKENDS,
+                key="i1_llm_backend",
+                help="Ollama = local y gratis. Los demás requieren API key.",
+            )
+        with col_llm2:
+            # Modelo por defecto según backend
+            modelo_default = apa_llm.BACKEND_DEFAULTS[backend_i1]["model"]
+            modelo_i1 = st.text_input(
+                "Modelo",
+                value=modelo_default,
+                key="i1_llm_model",
+                help="Para Ollama: nombre del modelo instalado (ej: gemma3:12b). "
+                     "Para otros backends: nombre del modelo de la API.",
+            )
+            apikey_i1 = st.text_input(
+                "API Key",
+                value="",
+                type="password",
+                key="i1_llm_key",
+                placeholder="No requerida para Ollama",
+                help="Pega aquí tu API key si usas Claude, OpenAI o Grok.",
+            )
+        autocorr_llm_i1 = st.checkbox(
+            "Aplicar correcciones LLM al archivo",
+            value=False,
+            key="i1_llm_autocorr",
+            help="Si está activo, las correcciones del LLM se escriben en la "
+                 "columna H del archivo descargado (marcadas en azul).",
+        )
+        if backend_i1 == "ollama":
+            st.info(
+                f"Modelo por defecto: **{modelo_default}**. "
+                "Si no lo tienes instalado, ejecuta en terminal: "
+                f"`ollama pull {modelo_default}`",
+                icon="💡",
+            )
 
     st.markdown("### 3 · Revisar")
 
@@ -536,6 +591,24 @@ with tab_i1:
                                 if autocorr_apa_i1 and _apa_corr:
                                     _wb_apa.save(salidas[0])
                             _wb_apa.close()
+                        # ── APA con LLM ──────────────────────────────
+                        if usar_llm_i1:
+                            import openpyxl as _oxl2
+                            _wb_llm = _oxl2.load_workbook(salidas[0])
+                            if "Planificación por unidades" in _wb_llm.sheetnames:
+                                _ws_llm = _wb_llm["Planificación por unidades"]
+                                _llm_log, _llm_probs, _llm_corr = \
+                                    apa_llm.revisar_columna_recursos_llm(
+                                        _ws_llm,
+                                        backend=backend_i1,
+                                        model=modelo_i1 or None,
+                                        api_key=apikey_i1,
+                                        autocorregir=autocorr_llm_i1,
+                                    )
+                                log.extend(_llm_log)
+                                if autocorr_llm_i1 and _llm_corr:
+                                    _wb_llm.save(salidas[0])
+                            _wb_llm.close()
                         # ────────────────────────────────────────────────
                         with open(salidas[0], "rb") as f:
                             output_bytes = f.read()
@@ -618,6 +691,52 @@ with tab_i1:
                         expanded=_apa_probs_log > 0,
                     ):
                         for linea in _apa_detalle:
+                            st.markdown(linea)
+
+            # ── Métricas LLM ─────────────────────────────────────────────
+            if usar_llm_i1:
+                _llm_probs_log = sum(
+                    1 for l in log if "APA 7 LLM" not in l
+                    and "❌" in l and "LLM" not in l
+                    and "[APA_" not in l
+                )
+                _llm_corr_log = sum(
+                    1 for l in log
+                    if l.strip().startswith("✅") and "corrección(es) aplicada" in l
+                )
+                # Leer directamente del log LLM
+                for l in reversed(log):
+                    m = re.search(r'APA 7 LLM: (\d+) problema', l)
+                    if m:
+                        _llm_probs_log = int(m.group(1))
+                        break
+                for l in reversed(log):
+                    m = re.search(r'APA 7 LLM:.*?(\d+) corrección', l)
+                    if m:
+                        _llm_corr_log = int(m.group(1))
+                        break
+
+                col_l1, col_l2 = st.columns(2)
+                with col_l1:
+                    st.metric(
+                        f"Problemas APA — LLM ({backend_i1})",
+                        _llm_probs_log,
+                        delta="revisar" if _llm_probs_log else "referencias OK",
+                        delta_color="inverse" if _llm_probs_log else "normal",
+                    )
+                with col_l2:
+                    st.metric("Correcciones LLM aplicadas", _llm_corr_log)
+
+                _llm_detalle = [
+                    l for l in log
+                    if "LLM" in l or ("Fila" in l and "corrección(es) aplicada" in l)
+                ]
+                if _llm_detalle:
+                    with st.expander(
+                        f"🤖 Detalle APA LLM ({_llm_probs_log} problema(s))",
+                        expanded=_llm_probs_log > 0,
+                    ):
+                        for linea in _llm_detalle:
                             st.markdown(linea)
 
             if metricas["tiene_as"]:

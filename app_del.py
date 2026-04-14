@@ -194,45 +194,45 @@ st.markdown("""
     /* ── Checkbox ── */
     .stCheckbox label { color: #004d26; font-weight: 500; }
 
-    /* ── Botones por instancia — via wrappers con id ── */
-    #btn-i1 button, #btn-i1 button[data-testid="baseButton-primary"],
-    #btn-i1 button[data-testid="baseButton-disabled"] {
+    /* ── Botones por instancia — marcador :has() ── */
+    /* El marcador <div id="btn-X"> es hermano del div del botón;
+       :has() selecciona el contenedor padre que contiene el marcador,
+       luego ~ busca el div del botón en el mismo nivel.            */
+    div:has(> #btn-i1) ~ div button {
         background-color: #4A9068 !important; border-color: #4A9068 !important;
         color: #fff !important;
     }
-    #btn-i1 button:hover { background-color: #357a52 !important; }
+    div:has(> #btn-i1) ~ div button:hover { background-color: #357a52 !important; }
 
-    #btn-i2 button, #btn-i2 button[data-testid="baseButton-primary"],
-    #btn-i2 button[data-testid="baseButton-disabled"] {
+    div:has(> #btn-i2) ~ div button {
         background-color: #4A7FA5 !important; border-color: #4A7FA5 !important;
         color: #fff !important;
     }
-    #btn-i2 button:hover { background-color: #356488 !important; }
+    div:has(> #btn-i2) ~ div button:hover { background-color: #356488 !important; }
 
-    #btn-i3 button, #btn-i3 button[data-testid="baseButton-primary"],
-    #btn-i3 button[data-testid="baseButton-disabled"] {
+    div:has(> #btn-i3) ~ div button {
         background-color: #8B6EAF !important; border-color: #8B6EAF !important;
         color: #fff !important;
     }
-    #btn-i3 button:hover { background-color: #70578f !important; }
+    div:has(> #btn-i3) ~ div button:hover { background-color: #70578f !important; }
 
-    #btn-hist button, #btn-hist button[data-testid="baseButton-primary"] {
+    div:has(> #btn-hist) ~ div button {
         background-color: #C07A3A !important; border-color: #C07A3A !important;
         color: #fff !important;
     }
-    #btn-hist button:hover { background-color: #a0622c !important; }
+    div:has(> #btn-hist) ~ div button:hover { background-color: #a0622c !important; }
 
-    #btn-dict button, #btn-dict button[data-testid="baseButton-primary"] {
+    div:has(> #btn-dict) ~ div button {
         background-color: #5A7A8A !important; border-color: #5A7A8A !important;
         color: #fff !important;
     }
-    #btn-dict button:hover { background-color: #456070 !important; }
+    div:has(> #btn-dict) ~ div button:hover { background-color: #456070 !important; }
 
-    #btn-nueva button {
+    div:has(> #btn-nueva) ~ div button {
         background-color: #6c757d !important; border-color: #6c757d !important;
         color: #fff !important; border-radius: 8px !important;
     }
-    #btn-nueva button:hover { background-color: #545b62 !important; }
+    div:has(> #btn-nueva) ~ div button:hover { background-color: #545b62 !important; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -341,11 +341,10 @@ if not SCRIPT_OK:
 # ── Botón de limpieza ─────────────────────────────────────────────────────
 _col_sp, _col_btn = st.columns([6, 1])
 with _col_btn:
-    st.markdown('<div id="btn-nueva">', unsafe_allow_html=True)
+    st.markdown('<div id="btn-nueva"></div>', unsafe_allow_html=True)
     if st.button("🔄 Nueva", help="Limpia todos los archivos y resultados para procesar otra planificación", use_container_width=True):
         st.session_state.clear()
         st.rerun()
-    st.markdown('</div>', unsafe_allow_html=True)
 
 # ═════════════════════════════════════════════════════════════════════════
 #  SELECTOR DE INSTANCIA
@@ -554,7 +553,7 @@ with tab_i1:
     st.markdown("### 3 · Revisar")
 
     listo_i1 = bool(pdf_file and xlsx_file)
-    st.markdown('<div id="btn-i1">', unsafe_allow_html=True)
+    st.markdown('<div id="btn-i1"></div>', unsafe_allow_html=True)
     procesar_i1 = st.button(
         "▶ Revisar planificación",
         disabled=not listo_i1,
@@ -563,7 +562,6 @@ with tab_i1:
         use_container_width=True,
         help="Sube el PDF y el .xlsx para activar este botón." if not listo_i1 else "",
     )
-    st.markdown('</div>', unsafe_allow_html=True)
 
     if not listo_i1:
         st.caption("⬆ Sube el PDF del programa y la planificación .xlsx para continuar.")
@@ -945,7 +943,7 @@ def _render_instancia_escala(tab, instancia_num, key_prefix):
         st.markdown(f"### 3 · Aplicar correcciones")
 
         listo_x = bool(escala_f and plan_f)
-        st.markdown(f'<div id="btn-{key_prefix}">', unsafe_allow_html=True)
+        st.markdown(f'<div id="btn-{key_prefix}"></div>', unsafe_allow_html=True)
         procesar_x = st.button(
             f"▶ Aplicar correcciones (Instancia {instancia_num})",
             disabled=not listo_x,
@@ -955,7 +953,6 @@ def _render_instancia_escala(tab, instancia_num, key_prefix):
             help="Sube la escala y la planificación para activar."
                  if not listo_x else "",
         )
-        st.markdown('</div>', unsafe_allow_html=True)
         if not listo_x:
             st.caption("⬆ Sube la escala completada y la planificación para continuar.")
 
@@ -1168,7 +1165,7 @@ with tab_hist:
         # ── Exportar CSV ────────────────────────────────────────────────
         st.divider()
         csv_bytes = df.to_csv(index=False).encode("utf-8")
-        st.markdown('<div id="btn-hist">', unsafe_allow_html=True)
+        st.markdown('<div id="btn-hist"></div>', unsafe_allow_html=True)
         st.download_button(
             "⬇ Exportar historial completo (.csv)",
             data=csv_bytes,
@@ -1177,7 +1174,6 @@ with tab_hist:
             type="primary",
             use_container_width=True,
         )
-        st.markdown('</div>', unsafe_allow_html=True)
 
 # ═════════════════════════════════════════════════════════════════════════
 #  DICCIONARIO UST
@@ -1234,7 +1230,7 @@ with tab_dict:
         nuevo_corr = st.text_input("Corrección UST",     key="dict_corr",
                                    placeholder="ej: Pruebas escritas u orales")
 
-    st.markdown('<div id="btn-dict">', unsafe_allow_html=True)
+    st.markdown('<div id="btn-dict"></div>', unsafe_allow_html=True)
     if st.button("➕ Agregar al diccionario", key="btn_dict_add", type="primary", use_container_width=True):
         if nuevo_inc.strip() and nuevo_corr.strip():
             dict_ust.agregar_entrada(mapa_sel, nuevo_inc, nuevo_corr)
@@ -1242,7 +1238,6 @@ with tab_dict:
             st.rerun()
         else:
             st.warning("Completa ambos campos antes de agregar.")
-    st.markdown('</div>', unsafe_allow_html=True)
 
     st.divider()
 

@@ -336,11 +336,17 @@ from datetime import datetime
 _ahora = datetime.now().strftime("%d/%m/%Y  %H:%M")
 
 st.markdown(f"""
+<div style="position:fixed; top:14px; right:24px; z-index:9999;
+            background:rgba(0,102,51,0.12); border:1px solid rgba(0,102,51,0.25);
+            border-radius:10px; padding:6px 16px; text-align:right; line-height:1.2;">
+  <span style="font-size:1.35rem; font-weight:700; color:#004d26; letter-spacing:0.02em;">
+    🕐 {_ahora}
+  </span>
+</div>
 <div class="del-header">
   <h2>📋 Procesador de Planificaciones DEL</h2>
   <p class="sub">Universidad Santo Tomás · Dirección de Educación a Distancia</p>
   <span class="badge">Semestre 2026-1</span>
-  <span class="badge" style="margin-left:8px; opacity:0.85;">🕐 {_ahora}</span>
 </div>
 """, unsafe_allow_html=True)
 

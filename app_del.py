@@ -225,6 +225,36 @@ st.markdown("""
     div[data-testid="stTabs"] > div > div:nth-child(3) button[data-testid="baseButton-primary"]:hover {
         background-color: #70578f !important;
     }
+    /* Historial — naranja tostado pastel */
+    div[data-testid="stTabs"] > div > div:nth-child(4) button[kind="primary"],
+    div[data-testid="stTabs"] > div > div:nth-child(4) button[data-testid="baseButton-primary"] {
+        background-color: #C07A3A !important;
+        border-color:     #C07A3A !important;
+    }
+    div[data-testid="stTabs"] > div > div:nth-child(4) button[kind="primary"]:hover,
+    div[data-testid="stTabs"] > div > div:nth-child(4) button[data-testid="baseButton-primary"]:hover {
+        background-color: #a0622c !important;
+    }
+    /* Diccionario UST — gris azulado pastel */
+    div[data-testid="stTabs"] > div > div:nth-child(5) button[kind="primary"],
+    div[data-testid="stTabs"] > div > div:nth-child(5) button[data-testid="baseButton-primary"] {
+        background-color: #5A7A8A !important;
+        border-color:     #5A7A8A !important;
+    }
+    div[data-testid="stTabs"] > div > div:nth-child(5) button[kind="primary"]:hover,
+    div[data-testid="stTabs"] > div > div:nth-child(5) button[data-testid="baseButton-primary"]:hover {
+        background-color: #456070 !important;
+    }
+    /* Botón 🔄 Nueva — gris neutro */
+    div[data-testid="stHorizontalBlock"] button:not([kind="primary"]) {
+        background-color: #6c757d !important;
+        border-color:     #6c757d !important;
+        color:            #ffffff !important;
+        border-radius:    8px !important;
+    }
+    div[data-testid="stHorizontalBlock"] button:not([kind="primary"]):hover {
+        background-color: #545b62 !important;
+    }
 </style>
 """, unsafe_allow_html=True)
 

@@ -2284,6 +2284,129 @@ _VERBOS_IMPERATIVO = {
     'valida','valora','verifica','visualiza',
 }
 
+# ── Inicios incorrectos: preposición, locución o gerundio en lugar de imperativo ──
+_PAT_INICIO_NO_IMPERATIVO = re.compile(
+    r'^(?:\d+\.\s+)?'
+    r'(?:'
+    # Locuciones prepositivas
+    r'a\s+partir\s+de|en\s+base\s+a|con\s+base\s+en|'
+    r'a\s+trav[eé]s\s+de|en\s+funci[oó]n\s+de|'
+    r'teniendo\s+en\s+cuenta|tomando\s+en\s+cuenta|'
+    r'considerando\s+(?:que\s+)?|teniendo\s+presente|'
+    r'de\s+acuerdo\s+(?:a|con)|'
+    # Conectores textuales
+    r'luego\s+de|despu[eé]s\s+de|una\s+vez\s+que|'
+    r'con\s+el\s+fin\s+de|con\s+el\s+objetivo\s+de|'
+    # Infinitivos (terminaciones -ar -er -ir seguidas de espacio o fin)
+    r'[a-záéíóúüñ]{3,}(?:ar|er|ir)\s|'
+    # 3ª persona singular/plural
+    r'el\s+estudiante|los\s+estudiantes|'
+    r'el\s+alumno|la\s+alumna|los\s+alumnos|'
+    # Sustantivo abstracto sin verbo
+    r'reflexi[oó]n\s+sobre|an[aá]lisis\s+de|revisi[oó]n\s+de|'
+    r'lectura\s+de|elaboraci[oó]n\s+de|redacci[oó]n\s+de'
+    r')',
+    re.IGNORECASE,
+)
+
+
+def verificar_imperativo_momentos(ws_plan, log):
+    """
+    Verifica que CADA instrucción de actividad en los 3 momentos de aprendizaje
+    comience con un verbo imperativo en segunda persona singular (tú).
+
+    Aplica a: Preparación, Desarrollo, Trabajo Independiente.
+    Revisa tanto ítems numerados como consignas de línea única.
+
+    Devuelve (n_ok, n_advertencias).
+    """
+    if not ws_plan:
+        return 0, 0
+
+    ok  = 0
+    adv = []
+
+    for row in ws_plan.iter_rows(min_row=4, values_only=True):
+        momento   = str(row[COL['MOMENTO']   - 1] or '').strip()
+        actividad = str(row[COL['ACTIVIDAD'] - 1] or '').strip()
+        unidad    = str(row[COL['UNIDAD']    - 1] or '').strip()
+        semana    = str(row[COL['SEMANA']    - 1] or '').strip()
+
+        if not momento or not actividad or len(actividad) < 10:
+            continue
+        m = momento.lower()
+        if not any(k in m for k in ('preparaci', 'desarrollo', 'independiente')):
+            continue
+
+        ref = f'{momento[:20]} {("U"+unidad) if unidad else ""}{(" S"+semana) if semana else ""}'.strip()
+
+        # Obtener todas las líneas de instrucción (excluir título y Propósito)
+        lineas = [l.strip() for l in actividad.split('\n') if l.strip()]
+        instrucciones = []
+        for l in lineas:
+            es_titulo    = bool(_PAT_TITULO_MOMENTO.match(l)) and len(l) < 60
+            es_proposito = bool(re.match(r'Prop[oó]sito\s*:', l, re.IGNORECASE))
+            if not es_titulo and not es_proposito:
+                instrucciones.append(l)
+
+        if not instrucciones:
+            continue
+
+        problemas_bloque = []
+        for linea in instrucciones:
+            # Extraer primera palabra (sin número de ítem)
+            m_ini = re.match(r'^(?:\d+\.\s+)?([A-ZÁÉÍÓÚa-záéíóúüñÑ][a-záéíóúüñÑ]*)', linea)
+            if not m_ini:
+                continue
+
+            primer_palabra = m_ini.group(1).lower()
+
+            # Caso 1: inicio con locución/preposición/infinitivo/3ª persona
+            if _PAT_INICIO_NO_IMPERATIVO.match(linea):
+                problemas_bloque.append(
+                    f'"{linea[:80]}" — '
+                    f'comienza con "{m_ini.group(1)}", no con verbo imperativo '
+                    f'(usar: Redacta, Analiza, Reflexiona…)'
+                )
+
+            # Caso 2: primera palabra no está en el listado de imperativos
+            elif primer_palabra not in _VERBOS_IMPERATIVO:
+                # Ignorar líneas muy cortas que sean títulos no detectados
+                if len(linea) < 8:
+                    continue
+                # Ignorar si es acción del docente (ya reportada por corregir_lenguaje_actividades)
+                if _PAT_ACCION_DOCENTE.match(linea):
+                    continue
+                problemas_bloque.append(
+                    f'"{linea[:80]}" — '
+                    f'comienza con "{m_ini.group(1)}", no reconocido como imperativo 2ª persona '
+                    f'(verificar: ¿es infinitivo, 3ª persona o locución?)'
+                )
+
+        if problemas_bloque:
+            adv.append(f'    ⚠️  {ref}:')
+            for p in problemas_bloque:
+                adv.append(f'        → {p}')
+        else:
+            ok += 1
+
+    log.append('\n  [Verificación: verbo imperativo 2ª persona en actividades]')
+    if adv:
+        for a in adv:
+            log.append(a)
+        log.append(
+            f'    Referencia: Manual UST — las instrucciones al estudiante '
+            f'deben iniciar con verbo imperativo (Analiza, Redacta, Reflexiona…)'
+        )
+    elif ok > 0:
+        log.append(f'    ✅ {ok} bloque(s) con instrucciones correctamente en imperativo 2ª persona')
+    else:
+        log.append('    —  No se encontraron actividades para verificar')
+
+    n_adv = len([a for a in adv if a.strip().startswith('⚠️')])
+    return ok, n_adv
+
+
 # Imperativas con acento incorrecto → forma correcta
 # Las formas agudas de tipo "clasifíca" son incorrecto — el imperativo es grave: "clasifica"
 _ACENTOS_IMPERATIVO = {
@@ -3796,6 +3919,7 @@ def procesar_asignatura(carpeta_asig, dry_run=False, programa=None, es_as=False)
             wb['Planificación por unidades'], log
         )
         verificar_consignas_foro(wb['Planificación por unidades'], log)
+        verificar_imperativo_momentos(wb['Planificación por unidades'], log)
 
     # ── Revisión ortográfica/gramatical con LanguageTool ─────────────────
     if 'Planificación por unidades' in hojas and _LANGUAGETOOL_ACTIVO:

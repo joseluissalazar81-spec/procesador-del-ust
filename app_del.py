@@ -330,6 +330,13 @@ if not SCRIPT_OK:
     st.error("No se encontró `revisar_planificaciones.py` en la misma carpeta que esta app.")
     st.stop()
 
+# ── Botón de limpieza ─────────────────────────────────────────────────────
+_col_sp, _col_btn = st.columns([6, 1])
+with _col_btn:
+    if st.button("🔄 Nueva", help="Limpia todos los archivos y resultados para procesar otra planificación", use_container_width=True):
+        st.session_state.clear()
+        st.rerun()
+
 # ═════════════════════════════════════════════════════════════════════════
 #  SELECTOR DE INSTANCIA
 # ═════════════════════════════════════════════════════════════════════════

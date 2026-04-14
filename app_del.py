@@ -13,6 +13,7 @@ Desplegar en Streamlit Cloud:
 import streamlit as st
 import sys, os, glob, shutil, tempfile, re
 from io import BytesIO
+import db_historial as hist
 
 # ── Configuración de página ───────────────────────────────────────────────
 st.set_page_config(
@@ -297,10 +298,11 @@ if not SCRIPT_OK:
 #  SELECTOR DE INSTANCIA
 # ═════════════════════════════════════════════════════════════════════════
 
-tab_i1, tab_i2, tab_i3 = st.tabs([
+tab_i1, tab_i2, tab_i3, tab_hist = st.tabs([
     "Instancia 1 — Revisión previa al envío",
     "Instancia 2 — 1ª revisora DEL",
     "Instancia 3 — 2ª revisora / aprobación final",
+    "📊 Historial",
 ])
 
 # ═════════════════════════════════════════════════════════════════════════
@@ -459,6 +461,15 @@ with tab_i1:
             st.error("El procesamiento falló. Revisa el log.")
         else:
             metricas = parsear_log(log)
+            hist.registrar(instancia=1, archivo_nombre=output_name,
+                           metricas=metricas, programa=programa or None)
+            veces = hist.contar_por_codigo((programa or {}).get("codigo", ""))
+            if veces >= 3:
+                st.warning(
+                    f"⚠️ Esta asignatura ya fue procesada **{veces} veces**. "
+                    "Verifica si corresponde a una nueva versión.",
+                    icon="🔁",
+                )
 
             col1, col2, col3 = st.columns(3)
             with col1:
@@ -700,6 +711,15 @@ def _render_instancia_escala(tab, instancia_num, key_prefix):
                     st.code("\n".join(log_x), language=None)
             else:
                 metricas_x = parsear_log(log_x)
+                hist.registrar(instancia=instancia_num, archivo_nombre=out_name_x,
+                               metricas=metricas_x, programa=programa_x or None)
+                veces_x = hist.contar_por_codigo((programa_x or {}).get("codigo", ""))
+                if veces_x >= 3:
+                    st.warning(
+                        f"⚠️ Esta asignatura ya fue procesada **{veces_x} veces**. "
+                        "Verifica si corresponde a una nueva versión.",
+                        icon="🔁",
+                    )
 
                 n_anot_x = 0
                 for linea in log_x:
@@ -802,3 +822,82 @@ def _render_instancia_escala(tab, instancia_num, key_prefix):
 # Renderizar I2 e I3 con la función compartida
 _render_instancia_escala(tab_i2, instancia_num=2, key_prefix="i2")
 _render_instancia_escala(tab_i3, instancia_num=3, key_prefix="i3")
+
+# ═════════════════════════════════════════════════════════════════════════
+#  HISTORIAL
+# ═════════════════════════════════════════════════════════════════════════
+
+with tab_hist:
+    st.markdown("### Historial de planificaciones procesadas")
+
+    registros = hist.obtener_historial()
+
+    if not registros:
+        st.info("Aún no hay registros. Procesa una planificación para comenzar el historial.")
+    else:
+        # ── Métricas globales ───────────────────────────────────────────
+        total_proc   = len(registros)
+        total_corr   = sum(r["total_correcciones"] for r in registros)
+        total_crit_e = sum(r["criterios_error"] for r in registros)
+
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Planificaciones procesadas", total_proc)
+        c2.metric("Correcciones acumuladas", total_corr)
+        c3.metric("Criterios con error (acum.)", total_crit_e)
+
+        st.divider()
+
+        # ── Tabla de registros ──────────────────────────────────────────
+        import pandas as pd
+
+        df = pd.DataFrame(registros)
+        df = df.rename(columns={
+            "id":                  "ID",
+            "fecha_hora":          "Fecha",
+            "instancia":           "I",
+            "codigo_asignatura":   "Código",
+            "nombre_asignatura":   "Asignatura",
+            "archivo_nombre":      "Archivo",
+            "total_correcciones":  "Corr.",
+            "criterios_ok":        "✅",
+            "criterios_error":     "❌",
+            "criterios_manual":    "⚠️",
+            "discrepancias_prog":  "Disc.",
+            "lt_errores":          "LT err.",
+            "lt_correcciones":     "LT corr.",
+            "tiene_as":            "A+S",
+            "as_ok":               "A+S✅",
+            "as_error":            "A+S❌",
+        })
+        df["A+S"] = df["A+S"].map({0: "", 1: "Sí"})
+        st.dataframe(
+            df.drop(columns=["A+S✅", "A+S❌"], errors="ignore"),
+            use_container_width=True,
+            hide_index=True,
+        )
+
+        # ── Resumen por asignatura ──────────────────────────────────────
+        st.divider()
+        st.markdown("#### Resumen por asignatura")
+        resumen = hist.resumen_errores()
+        if resumen:
+            df_res = pd.DataFrame(resumen).rename(columns={
+                "codigo_asignatura":  "Código",
+                "nombre_asignatura":  "Asignatura",
+                "veces_procesada":    "Veces",
+                "total_corr":         "Corr. totales",
+                "total_crit_err":     "Crit. error",
+                "total_disc":         "Discrepancias",
+                "total_lt":           "LT errores",
+            })
+            st.dataframe(df_res, use_container_width=True, hide_index=True)
+
+        # ── Exportar CSV ────────────────────────────────────────────────
+        st.divider()
+        csv_bytes = df.to_csv(index=False).encode("utf-8")
+        st.download_button(
+            "⬇ Exportar historial completo (.csv)",
+            data=csv_bytes,
+            file_name="historial_del.csv",
+            mime="text/csv",
+        )

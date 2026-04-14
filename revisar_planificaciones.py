@@ -1669,25 +1669,24 @@ _VERBOS_PLURAL_SINGULAR = {
     'investiguen': 'investiga',   'describan': 'describe',     'expliquen': 'explica',
 }
 
-# Ítems numerados que describen acción del docente en lugar del estudiante
+# Ítems (numerados O sin número) cuyo sujeto es el o la docente
+# (?:\d+\.\s+)? hace el número inicial OPCIONAL → funciona con y sin numeración
 _PAT_ACCION_DOCENTE = re.compile(
-    r'^\d+\.\s+(?:'
-    r'la docente|el o la docente|el docente|la\/el docente'
-    r')\s+\w',
+    r'^(?:\d+\.\s+)?(?:la docente|el o la docente|el docente|la\/el docente)\s+\w',
     re.IGNORECASE
 )
 
-# Ítems donde el estudiante recibe pasivamente del o la docente
-# "Recibe retroalimentación del o la docente…" → el sujeto activo es el docente
+# Ítems donde el estudiante recibe pasivamente (docente es agente activo)
+# Funciona con y sin numeración: "Recibe retroalimentación del o la docente…"
 _PAT_RECEPCION_PASIVA = re.compile(
-    r'^\d+\.\s+(?:recibe|observa la|escucha la)\s+'
+    r'^(?:\d+\.\s+)?(?:recibe|observa la|escucha la)\s+'
     r'.{0,60}(?:del\s+o\s+la\s+docente|del\s+docente|de\s+la\s+docente)',
     re.IGNORECASE
 )
 
-# Ítems numerados que son frases nominales (sin verbo imperativo)
+# Ítems (numerados O sin número) que son frases nominales sin verbo imperativo
 _PAT_FRASE_NOMINAL = re.compile(
-    r'^\d+\.\s+'
+    r'^(?:\d+\.\s+)?'
     r'(puesta en|revisión de|análisis de|presentación de|trabajo en|'
     r'discusión sobre|reflexión sobre|síntesis de|manejo de|introducción a|'
     r'bienvenida|presentación del|presentación de la|exposición del|exposición de la)',
@@ -1695,7 +1694,6 @@ _PAT_FRASE_NOMINAL = re.compile(
 )
 
 # Notas editoriales entre paréntesis destinadas al docente (no al estudiante)
-# Detecta: "(mejorar la instruccion)", "(pendiente)", "(agregar recurso)"
 _PAT_NOTA_EDITORIAL = re.compile(
     r'\([^)]{5,120}(?:'
     r'mejorar|incorporar|agregar|pendiente|revisar la|revisar el|'
@@ -1703,6 +1701,12 @@ _PAT_NOTA_EDITORIAL = re.compile(
     r'ver con|falta|corregir esto|ajustar'
     r')[^)]{0,80}\)',
     re.IGNORECASE
+)
+
+# Línea de TÍTULO del momento: solo letras, tildes, ñ y espacios (sin puntuación)
+# Ejemplos: "Familiarízate con la asignatura…", "Activa tus conocimientos"
+_PAT_TITULO_MOMENTO = re.compile(
+    r'^[A-ZÁÉÍÓÚÑ][A-ZÁÉÍÓÚÑa-záéíóúñü\s,]+$'
 )
 
 # Verbos imperativos 2ª persona válidos para iniciar ítems
@@ -1943,94 +1947,94 @@ def corregir_lenguaje_actividades(ws, log, registro=None):
                  texto, texto_nuevo)
             celdas_modificadas += 1
 
-        # ── 4. Detección de problemas — una línea puede tener varios issues ──
-        # Se usan `if` independientes (no `elif`) para reportar todos los problemas.
-        for linea in texto_nuevo.split('\n'):
-            linea = linea.strip()
-            if not linea:
+        # ── 4. Detección de problemas (numerados Y sin número) ───────────────
+        # Divide el bloque en líneas y determina cuál es el título del momento
+        # (primera línea no vacía solo con letras y espacios).
+        # Todos los checks usan `if` independientes para reportar múltiples issues.
+        lineas_bloque = [l.strip() for l in texto_nuevo.split('\n') if l.strip()]
+        titulo_bloque = None
+        for _l in lineas_bloque:
+            if _PAT_TITULO_MOMENTO.match(_l):
+                titulo_bloque = _l
+                break  # solo la primera línea "limpia" es el título
+
+        for linea in lineas_bloque:
+            es_proposito_l = bool(re.match(r'Prop[oó]sito\s*:', linea, re.IGNORECASE))
+            es_titulo_l    = (linea == titulo_bloque)
+            es_numerado    = bool(re.match(r'^\d+\.', linea))
+
+            # No verificar la línea de título del momento ni el Propósito
+            if es_titulo_l or es_proposito_l:
                 continue
 
-            es_numerado = bool(re.match(r'^\d+\.', linea))
-
-            # a) Ítem cuyo sujeto explícito es el o la docente
+            # a) Sujeto explícito es el o la docente
             if _PAT_ACCION_DOCENTE.match(linea):
                 advertencias.append(
                     f'    [Plan F{r} {str(momento)[:12]}] ⚠️  Ítem con docente como sujeto '
                     f'(reescribir dirigido al estudiante): "{linea[:90]}"'
                 )
 
-            # b) Ítem nominal — empieza con sustantivo, no con verbo imperativo
+            # b) Frase nominal — empieza con sustantivo conocido, no verbo
             if _PAT_FRASE_NOMINAL.match(linea):
                 advertencias.append(
                     f'    [Plan F{r} {str(momento)[:12]}] ⚠️  Ítem nominal sin verbo imperativo '
                     f'(iniciar con verbo: Analiza, Revisa, Identifica…): "{linea[:90]}"'
                 )
 
-            # b2) Ítem NUMERADO que no empieza con verbo imperativo
-            # (la verificación d) solo cubre líneas NO numeradas)
-            if es_numerado and not _PAT_ACCION_DOCENTE.match(linea):
-                m_verbo = re.match(r'^\d+\.\s+([A-ZÁÉÍÓÚa-záéíóúü]+)', linea)
-                if m_verbo:
-                    primer = m_verbo.group(1).lower()
-                    if (primer not in _VERBOS_IMPERATIVO
-                            and not _PAT_FRASE_NOMINAL.match(linea)):
-                        advertencias.append(
-                            f'    [Plan F{r} {str(momento)[:12]}] ⚠️  Ítem numerado sin verbo '
-                            f'imperativo ("{m_verbo.group(1)}" no es imperativo — '
-                            f'usar Analiza, Revisa, Identifica…): "{linea[:90]}"'
-                        )
-
-            # c) Separador "+" dentro de un ítem o línea de actividad
-            if '+' in linea and not linea.startswith('Propósito'):
+            # c) Separador "+"
+            if '+' in linea:
                 advertencias.append(
                     f'    [Plan F{r} {str(momento)[:12]}] ⚠️  Usa "+" como separador '
-                    f'(reemplazar por ítems numerados con verbo imperativo): "{linea[:90]}"'
+                    f'(reemplazar por ítems con verbo imperativo): "{linea[:90]}"'
                 )
 
-            # d) Línea NO numerada, no título, sin verbo imperativo
-            if (not es_numerado
-                    and not linea.startswith('Propósito')
-                    and not re.match(r'^[A-ZÁÉÍÓÚ][a-záéíóúü ,]+$', linea)):
-                primer_word = re.split(r'[\s,.]', linea)[0].lower().strip('¡!')
-                if primer_word and primer_word not in _VERBOS_IMPERATIVO:
+            # d) Cualquier ítem (numerado o no) sin verbo imperativo al inicio
+            # Extraer primera palabra real después del número (si existe)
+            m_primer = re.match(r'^(?:\d+\.\s+)?([A-ZÁÉÍÓÚa-záéíóúüñÑ]+)', linea)
+            if m_primer and not _PAT_ACCION_DOCENTE.match(linea):
+                primer = m_primer.group(1).lower()
+                if (primer not in _VERBOS_IMPERATIVO
+                        and not _PAT_FRASE_NOMINAL.match(linea)):
                     advertencias.append(
-                        f'    [Plan F{r} {str(momento)[:12]}] ⚠️  Línea sin verbo imperativo '
-                        f'(Revisa, Lee, Aplica…): "{linea[:90]}"'
+                        f'    [Plan F{r} {str(momento)[:12]}] ⚠️  Ítem sin verbo imperativo '
+                        f'("{m_primer.group(1)}" no es imperativo — '
+                        f'usar Analiza, Revisa, Identifica…): "{linea[:90]}"'
                     )
 
-            # e) "Propósito:" embebido dentro de un ítem numerado
-            # Debe ser un bloque independiente al final del momento, no parte de un ítem
-            if es_numerado and re.search(r'Prop[oó]sito\s*:', linea, re.IGNORECASE):
+            # e) "Propósito:" embebido dentro de un ítem (no al final del bloque)
+            if re.search(r'Prop[oó]sito\s*:', linea, re.IGNORECASE):
                 advertencias.append(
-                    f'    [Plan F{r} {str(momento)[:12]}] ⚠️  "Propósito:" dentro de ítem '
-                    f'numerado — debe ser línea independiente al final del bloque: '
-                    f'"{linea[:90]}"'
+                    f'    [Plan F{r} {str(momento)[:12]}] ⚠️  "Propósito:" dentro de un ítem '
+                    f'— debe ser línea independiente al final del bloque: "{linea[:90]}"'
                 )
 
-            # f) Recepción pasiva del estudiante (docente es el agente activo)
+            # f) Recepción pasiva — estudiante solo recibe del o la docente
             if _PAT_RECEPCION_PASIVA.match(linea):
                 advertencias.append(
                     f'    [Plan F{r} {str(momento)[:12]}] ⚠️  Ítem pasivo (docente actúa, '
-                    f'estudiante solo recibe) — reformular con verbo activo '
+                    f'estudiante recibe) — reformular con verbo activo '
                     f'(Reflexiona, Registra, Compara…): "{linea[:90]}"'
                 )
 
-            # g) Nota editorial entre paréntesis dirigida al docente
+            # g) Nota editorial entre paréntesis para el o la docente
             if _PAT_NOTA_EDITORIAL.search(linea):
                 advertencias.append(
                     f'    [Plan F{r} {str(momento)[:12]}] ⚠️  Nota editorial entre paréntesis '
-                    f'(eliminar: el texto debe dirigirse al estudiante, '
+                    f'(eliminar — el texto debe dirigirse al estudiante, '
                     f'no contener instrucciones para el docente): "{linea[:90]}"'
                 )
 
-        # h) Bloque con ítems numerados sin "Propósito:" al final
-        # Fuente: Manual Diseño Instruccional UST, p. 19 — estructura obligatoria
-        tiene_items = bool(re.search(r'^\d+\.', texto_nuevo, re.MULTILINE))
-        tiene_prop  = bool(re.search(r'Prop[oó]sito\s*:', texto_nuevo, re.IGNORECASE))
-        if tiene_items and not tiene_prop:
+        # h) Bloque con contenido de actividad pero sin "Propósito:" al final
+        # Aplica tanto si los ítems son numerados como si no lo son.
+        # Fuente: Manual Diseño Instruccional UST, p. 19
+        lineas_item = [l for l in lineas_bloque
+                       if l != titulo_bloque
+                       and not re.match(r'Prop[oó]sito\s*:', l, re.IGNORECASE)]
+        tiene_prop = bool(re.search(r'Prop[oó]sito\s*:', texto_nuevo, re.IGNORECASE))
+        if len(lineas_item) >= 2 and not tiene_prop:
             advertencias.append(
                 f'    [Plan F{r} {str(momento)[:12]}] ⚠️  Falta "Propósito:" al final '
-                f'del bloque (estructura obligatoria: título + ítems numerados + '
+                f'del bloque (estructura obligatoria: título + ítems + '
                 f'Propósito, Manual UST p.19)'
             )
 

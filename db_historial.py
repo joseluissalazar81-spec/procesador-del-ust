@@ -17,7 +17,7 @@ def _conectar() -> sqlite3.Connection:
 
 
 def inicializar_db():
-    """Crea la tabla si no existe."""
+    """Crea la tabla si no existe y aplica migraciones de columnas nuevas."""
     with _conectar() as conn:
         conn.execute("""
             CREATE TABLE IF NOT EXISTS historial (
@@ -41,6 +41,18 @@ def inicializar_db():
                 bloom_debil         INTEGER DEFAULT 0
             )
         """)
+        # Migraciones: añadir columnas que pueden no existir en DBs antiguas
+        columnas_nuevas = [
+            ("bloom_ok",    "INTEGER DEFAULT 0"),
+            ("bloom_debil", "INTEGER DEFAULT 0"),
+        ]
+        columnas_existentes = {
+            row[1]
+            for row in conn.execute("PRAGMA table_info(historial)").fetchall()
+        }
+        for col, definicion in columnas_nuevas:
+            if col not in columnas_existentes:
+                conn.execute(f"ALTER TABLE historial ADD COLUMN {col} {definicion}")
         conn.commit()
 
 

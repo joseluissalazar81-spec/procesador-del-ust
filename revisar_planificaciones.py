@@ -954,6 +954,11 @@ def procesar_instancia2(plan_bytes, escala_bytes,
     if 'Planificación por unidades' in hojas:
         verificar_momentos(wb['Planificación por unidades'], log)
 
+    # ── Verificación de horas ─────────────────────────────────────────────
+    _ws_sint = wb['Síntesis didáctica'] if 'Síntesis didáctica' in hojas else None
+    _ws_plan = wb['Planificación por unidades'] if 'Planificación por unidades' in hojas else None
+    verificar_horas(_ws_plan, _ws_sint, programa, log)
+
     # ── Verificación vs programa ───────────────────────────────────────────
     verificar_contra_programa(wb, programa, log)
 
@@ -1936,6 +1941,206 @@ def corregir_lenguaje_actividades(ws, log, registro=None):
 
 
 # ══════════════════════════════════════════════════════════════════════════
+#  VERIFICACIÓN DE HORAS
+# ══════════════════════════════════════════════════════════════════════════
+
+def _detectar_col_horas(ws):
+    """
+    Detecta la columna de horas en la hoja de planificación escaneando
+    las primeras 3 filas en busca de 'hora' en el encabezado.
+    Devuelve número de columna (1-based) o None si no se encuentra.
+    """
+    for fila in range(1, 4):
+        for col in range(1, ws.max_column + 1):
+            val = ws.cell(fila, col).value
+            if val and 'hora' in str(val).lower():
+                return col
+    return None
+
+
+def _leer_horas_sintesis(ws_sint):
+    """
+    Lee horas por unidad desde la Síntesis didáctica (filas 18-21, col G).
+    Devuelve dict {nombre_unidad → horas} con horas como int/float.
+    También devuelve el total de horas del curso (si existe).
+    """
+    horas_por_unidad = {}
+    if not ws_sint:
+        return horas_por_unidad
+
+    for fila in range(18, 26):   # ampliar rango por si hay más de 4 unidades
+        nombre = ws_sint.cell(fila, 2).value   # col B — nombre unidad
+        horas  = ws_sint.cell(fila, 7).value   # col G — horas asignadas
+        if nombre and horas:
+            try:
+                h = float(str(horas).replace(',', '.'))
+                horas_por_unidad[str(nombre).strip()] = h
+            except (ValueError, TypeError):
+                pass
+    return horas_por_unidad
+
+
+def _horas_por_unidad_plan(ws_plan, col_horas):
+    """
+    Suma horas por unidad y por momento en la hoja Planificación por unidades,
+    usando la columna de horas detectada.
+    Devuelve:
+      totales_unidad:   dict {unidad → total_horas}
+      por_momento:      dict {unidad → {momento → horas}}
+    """
+    totales_unidad = {}
+    por_momento    = {}
+    unidad_actual  = None
+
+    for row in ws_plan.iter_rows(min_row=4, values_only=True):
+        unidad  = row[COL['UNIDAD']  - 1]
+        momento = row[COL['MOMENTO'] - 1]
+        horas_v = row[col_horas      - 1] if col_horas else None
+
+        if unidad:
+            unidad_actual = str(unidad).strip()
+
+        if not unidad_actual:
+            continue
+
+        # Ignorar fila de totales
+        if 'total' in str(unidad_actual).lower():
+            continue
+
+        try:
+            h = float(str(horas_v).replace(',', '.')) if horas_v is not None else 0
+        except (ValueError, TypeError):
+            h = 0
+
+        if h <= 0:
+            continue
+
+        if unidad_actual not in totales_unidad:
+            totales_unidad[unidad_actual] = 0
+            por_momento[unidad_actual]    = {}
+
+        totales_unidad[unidad_actual] += h
+
+        if momento:
+            m = str(momento).strip()
+            por_momento[unidad_actual][m] = por_momento[unidad_actual].get(m, 0) + h
+
+    return totales_unidad, por_momento
+
+
+def verificar_horas(ws_plan, ws_sint, programa, log):
+    """
+    Verifica la distribución de horas en dos niveles:
+
+    Nivel 1 — Unidad vs Programa:
+      Las horas declaradas por unidad en la Síntesis deben coincidir con
+      el programa oficial (tolerancia ±1 hora pedagógica).
+
+    Nivel 2 — Momentos dentro de la unidad:
+      Preparación + Desarrollo + Trabajo Independiente = total de la unidad.
+
+    Devuelve (n_ok, n_error).
+    """
+    errores = []
+    oks     = []
+
+    # ── Nivel 1: Síntesis vs Programa ─────────────────────────────────────
+    if programa and not programa.get('_error') and programa.get('unidades'):
+        horas_sint = _leer_horas_sintesis(ws_sint)
+
+        # Construir mapa romano → horas del programa
+        prog_horas = {u['numero']: u['horas'] for u in programa['unidades']}
+        prog_nombres = {u['numero']: u['nombre'] for u in programa['unidades']}
+
+        # Intentar match Síntesis → romano por posición (Unidad I=pos 0, II=pos 1…)
+        ROMANO = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII']
+        sint_lista = list(horas_sint.items())   # [(nombre, horas), …]
+
+        for i, (nombre_sint, hrs_sint) in enumerate(sint_lista):
+            num_romano = ROMANO[i] if i < len(ROMANO) else None
+
+            # Intentar leer romano desde el nombre ("Unidad I", "Módulo II"…)
+            m = re.search(r'\b([IVX]+)\b', str(nombre_sint))
+            if m:
+                num_romano = m.group(1).upper()
+
+            if num_romano and num_romano in prog_horas:
+                hrs_prog = prog_horas[num_romano]
+                diff = abs(hrs_sint - hrs_prog)
+                if diff <= 1:
+                    oks.append(
+                        f'Unidad {num_romano} ({nombre_sint[:30]}): '
+                        f'{int(hrs_sint)}h (programa: {hrs_prog}h) ✓')
+                else:
+                    errores.append(
+                        f'Unidad {num_romano} ({nombre_sint[:30]}): '
+                        f'Síntesis={int(hrs_sint)}h ≠ programa={hrs_prog}h '
+                        f'(diferencia {diff:.0f}h)')
+            elif horas_sint:
+                # Sin programa: al menos informar lo que encontramos
+                oks.append(f'{nombre_sint[:35]}: {int(hrs_sint)}h declaradas en Síntesis')
+    else:
+        log.append('    ℹ️  Nivel 1 omitido: sin datos de programa oficial disponibles')
+
+    # ── Nivel 2: Momentos dentro de la unidad ─────────────────────────────
+    if ws_plan:
+        col_horas = _detectar_col_horas(ws_plan)
+
+        if col_horas:
+            totales_u, por_mom = _horas_por_unidad_plan(ws_plan, col_horas)
+            horas_sint = _leer_horas_sintesis(ws_sint)
+            SINT_LISTA = list(horas_sint.items())
+            ROMANO     = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII']
+            EXCLUIR    = {'total', 'evaluación final', 'lga', 'examen'}
+
+            for unidad, hrs_total_plan in totales_u.items():
+                if any(ex in unidad.lower() for ex in EXCLUIR):
+                    continue
+
+                momentos  = por_mom.get(unidad, {})
+                hrs_suma  = sum(momentos.values())
+                diff_int  = abs(hrs_suma - hrs_total_plan)
+
+                u_corta = unidad[:35]
+
+                # Verificar que los momentos suman el total de la unidad
+                if diff_int <= 0.5:
+                    oks.append(f'{u_corta}: momentos suman {hrs_suma:.0f}h = total unidad ✓')
+                else:
+                    detalle_mom = ', '.join(
+                        f'{m[:15]}={v:.0f}h' for m, v in momentos.items()
+                    )
+                    errores.append(
+                        f'{u_corta}: momentos suman {hrs_suma:.0f}h ≠ total {hrs_total_plan:.0f}h '
+                        f'({detalle_mom})')
+
+                # Verificar presencia de cada tipo de momento
+                mom_lower = {str(k).lower(): v for k, v in momentos.items()}
+                for lbl in ('preparación', 'desarrollo', 'trabajo independiente'):
+                    tiene = any(lbl in k for k in mom_lower)
+                    if not tiene:
+                        errores.append(
+                            f'{u_corta}: sin horas asignadas a "{lbl.capitalize()}"')
+
+        else:
+            log.append(
+                '    ℹ️  Nivel 2 omitido: no se detectó columna de horas en la Planificación '
+                '(verifica que el encabezado contenga "hora")')
+
+    # ── Reporte ───────────────────────────────────────────────────────────
+    log.append('\n  [Verificación de horas — Síntesis vs Programa y distribución por momentos]')
+    for o in oks:
+        log.append(f'    ✅ {o}')
+    for e in errores:
+        log.append(f'    ❌ {e}')
+    if not oks and not errores:
+        log.append('    ⚠️  Sin datos suficientes para verificar horas')
+
+    log.append(f'\n    Horas: {len(oks)}✅  {len(errores)}❌')
+    return len(oks), len(errores)
+
+
+# ══════════════════════════════════════════════════════════════════════════
 #  VERIFICACIÓN DE MOMENTOS (Manual Diseño Instruccional UST, Res. N°481/24)
 # ══════════════════════════════════════════════════════════════════════════
 #
@@ -2415,6 +2620,12 @@ def procesar_asignatura(carpeta_asig, dry_run=False, programa=None, es_as=False)
             wb['Planificación por unidades'], log
         )
 
+    # ── Verificación de horas ─────────────────────────────────────────────
+    n_hrs_ok = n_hrs_err = 0
+    ws_sint_ref = wb['Síntesis didáctica'] if 'Síntesis didáctica' in hojas else None
+    ws_plan_ref = wb['Planificación por unidades'] if 'Planificación por unidades' in hojas else None
+    n_hrs_ok, n_hrs_err = verificar_horas(ws_plan_ref, ws_sint_ref, programa, log)
+
     # ── Verificación contra programa oficial (si se proveyó PDF) ───────────
     n_discrepancias = verificar_contra_programa(wb, programa, log)
 
@@ -2452,6 +2663,7 @@ def procesar_asignatura(carpeta_asig, dry_run=False, programa=None, es_as=False)
     log.append(f'    TOTAL                  : {total} correcciones')
     log.append(f'    🔵 Celdas modificadas marcadas con fuente azul (#0070C0)')
     log.append(f'    📖 Verificación momentos (Manual UST): {n_mom_ok}✅  {n_mom_adv}⚠️ advertencias')
+    log.append(f'    ⏱️  Verificación de horas: {n_hrs_ok}✅  {n_hrs_err}❌')
     if programa:
         log.append(f'    📄 Verificación vs programa: {n_discrepancias} discrepancia(s) encontrada(s)')
     if es_as:

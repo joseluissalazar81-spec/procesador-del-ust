@@ -52,7 +52,8 @@ import glob
 import shutil
 import tempfile
 import openpyxl
-from openpyxl.styles import Font, PatternFill
+from openpyxl.styles import Font, PatternFill, Alignment
+from openpyxl.utils import get_column_letter
 from datetime import datetime
 
 
@@ -470,6 +471,78 @@ _FILL_FORMATIVA = PatternFill(fill_type='solid', fgColor='E8D5F5')  # lila paste
 _FILL_SUMATIVA  = PatternFill(fill_type='solid', fgColor='FFF2CC')  # amarillo pastel
 _FILL_NONE      = PatternFill(fill_type=None)
 
+def _reg(registro, ws, cell, tipo, original, corregido):
+    """Añade un registro de cambio a la lista de seguimiento."""
+    if registro is None:
+        return
+    col_letra = get_column_letter(cell.column)
+    registro.append({
+        'hoja':      ws.title,
+        'celda':     f'{col_letra}{cell.row}',
+        'tipo':      tipo,
+        'original':  str(original)[:300] if original is not None else '(vacío)',
+        'corregido': str(corregido)[:300],
+    })
+
+
+def escribir_registro_cambios(wb, registro):
+    """
+    Escribe/reemplaza la hoja 'Registro de cambios' con todos los cambios aplicados.
+    Cada fila indica: N°, Hoja, Celda, Tipo de corrección, Valor original, Valor corregido.
+    """
+    HOJA = 'Registro de cambios'
+    if HOJA in wb.sheetnames:
+        del wb[HOJA]
+    ws = wb.create_sheet(HOJA)
+
+    # ── Encabezado ─────────────────────────────────────────────────────────
+    CABECERAS = ['N°', 'Hoja', 'Celda', 'Tipo de corrección',
+                 'Valor original', 'Valor corregido']
+    fill_cab = PatternFill(fill_type='solid', fgColor='006633')   # verde UST
+    font_cab = Font(bold=True, color='FFFFFF', size=10)
+
+    for col, h in enumerate(CABECERAS, 1):
+        c = ws.cell(1, col, h)
+        c.font  = font_cab
+        c.fill  = fill_cab
+        c.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
+
+    # ── Filas de datos ─────────────────────────────────────────────────────
+    fill_par  = PatternFill(fill_type='solid', fgColor='F0F7F4')  # verde pálido (par)
+    fill_impar = PatternFill(fill_type=None)
+    font_norm = Font(size=9)
+
+    for i, cambio in enumerate(registro, 1):
+        fill = fill_par if i % 2 == 0 else fill_impar
+        valores = [
+            i,
+            cambio.get('hoja', ''),
+            cambio.get('celda', ''),
+            cambio.get('tipo', ''),
+            cambio.get('original', ''),
+            cambio.get('corregido', ''),
+        ]
+        for col, val in enumerate(valores, 1):
+            c = ws.cell(i + 1, col, val)
+            c.font      = font_norm
+            c.fill      = fill
+            c.alignment = Alignment(vertical='top', wrap_text=(col >= 4))
+
+    # ── Anchos de columna ──────────────────────────────────────────────────
+    anchos = {'A': 5, 'B': 26, 'C': 7, 'D': 38, 'E': 52, 'F': 52}
+    for col_letra, ancho in anchos.items():
+        ws.column_dimensions[col_letra].width = ancho
+
+    ws.row_dimensions[1].height = 22
+
+    # ── Resumen al final ───────────────────────────────────────────────────
+    if registro:
+        fila_res = len(registro) + 3
+        ws.cell(fila_res, 1, f'Total: {len(registro)} cambios aplicados').font = Font(bold=True, size=9)
+
+    return len(registro)
+
+
 def aplicar_azul(cell):
     """Aplica color de fuente azul (#0070C0) sin tocar el fondo de la celda."""
     f = cell.font
@@ -717,7 +790,7 @@ def _escribir_notas_i2(wb, fallidos):
     ws_n.column_dimensions['D'].width = 80
 
 
-def aplicar_obs_escala_i2(wb, criterios, log):
+def aplicar_obs_escala_i2(wb, criterios, log, registro=None):
     """
     Para cada criterio ❌ o Parcialmente con texto de observación:
     - Inyecta el texto en azul en las celdas vacías de la(s) columna(s) mapeadas.
@@ -776,8 +849,12 @@ def aplicar_obs_escala_i2(wb, criterios, log):
                     continue
 
                 if not target.value:
-                    target.value = f'[DEL: {obs_corta}]'
+                    texto_obs = f'[DEL: {obs_corta}]'
+                    target.value = texto_obs
                     aplicar_azul(target)
+                    _reg(registro, ws_plan, target,
+                         f'Observación revisora DEL ({estado}): {criterio[:60]}',
+                         None, texto_obs)
                     total_anotaciones += 1
 
     _escribir_notas_i2(wb, fallidos)
@@ -844,25 +921,26 @@ def procesar_instancia2(plan_bytes, escala_bytes,
     log.append(f'  Hojas   : {hojas}')
 
     # ── Correcciones automáticas (misma lógica I1) ─────────────────────────
+    registro = []   # Registro estructurado de cambios para la hoja final
     total_sint = 0
     if 'Síntesis didáctica' in hojas:
         log.append('\n  [Síntesis didáctica — correcciones automáticas]')
-        total_sint = corregir_sintesis(wb['Síntesis didáctica'], log)
+        total_sint = corregir_sintesis(wb['Síntesis didáctica'], log, registro)
         if total_sint == 0:
             log.append('    Sin cambios necesarios.')
 
     total_plan = 0
     if 'Planificación por unidades' in hojas:
         log.append('\n  [Planificación por unidades — correcciones automáticas]')
-        a, mj, mm, b = corregir_planificacion(wb['Planificación por unidades'], log)
+        a, mj, mm, b = corregir_planificacion(wb['Planificación por unidades'], log, registro)
         total_leng   = corregir_lenguaje_actividades(
-            wb['Planificación por unidades'], log)
+            wb['Planificación por unidades'], log, registro)
         total_plan   = a + mj + mm + b + total_leng
         if total_plan == 0:
             log.append('    Sin cambios necesarios.')
 
     # ── Observaciones de la revisora ───────────────────────────────────────
-    n_obs = aplicar_obs_escala_i2(wb, criterios, log)
+    n_obs = aplicar_obs_escala_i2(wb, criterios, log, registro)
 
     # ── Colores de fila (Formativa/Sumativa) ──────────────────────────────
     if 'Planificación por unidades' in hojas:
@@ -891,6 +969,9 @@ def procesar_instancia2(plan_bytes, escala_bytes,
     log.append(f'    TOTAL                    : {total}')
     log.append(f'    🔵 Texto azul = corrección automática o anotación revisora')
     log.append(f'    📋 Hoja NOTAS_CORRECCIONES_DEL = resumen completo de observaciones')
+    log.append(f'    📋 Hoja "Registro de cambios" = {len(registro)} cambio(s) documentado(s)')
+
+    escribir_registro_cambios(wb, registro)
 
     buf = BytesIO()
     wb.save(buf)
@@ -1179,7 +1260,9 @@ def verificar_escala(wb):
                 tipos_por_unidad[unidad_actual] = set()
             tipos_por_unidad[unidad_actual].add(t)
 
-            if proc in PROC_MAP:
+            # Cuestionario es válido para Diagnóstica; solo flag si es Sumativa/Formativa
+            _tipo_v = str(tipo or '').lower()
+            if proc in PROC_MAP and not (proc == 'Cuestionario' and 'diagnóst' in _tipo_v):
                 procs_invalidos.append(f'F? proc="{proc}"')
             if instr in ('Pauta', 'Rúbrica'):
                 instrs_invalidos.append(f'F? instr="{instr}"')
@@ -1407,17 +1490,21 @@ def detectar_unidades_grupales(ws):
 #  CORRECCIÓN SÍNTESIS DIDÁCTICA
 # ══════════════════════════════════════════════════════════════════════════
 
-def corregir_sintesis(ws, log):
+def corregir_sintesis(ws, log, registro=None):
     """Elimina DIAGNÓSTICA y FORMATIVA de procedimientos de evaluación."""
     cambios = 0
     for row in ws.iter_rows(min_row=1, values_only=False):
         for cell in row:
             if cell.column == 4 and cell.value and isinstance(cell.value, str):
                 if tiene_bloques_extra(cell.value):
+                    original = cell.value
                     nuevo = solo_sumativa(cell.value)
                     log.append(f'    [Síntesis F{cell.row}] Eliminados bloques DIAGNÓSTICA/FORMATIVA')
                     cell.value = nuevo
                     aplicar_azul(cell)
+                    _reg(registro, ws, cell,
+                         'Síntesis: eliminar DIAGNÓSTICA/FORMATIVA de procedimientos',
+                         original, nuevo)
                     cambios += 1
     return cambios
 
@@ -1426,7 +1513,7 @@ def corregir_sintesis(ws, log):
 #  CORRECCIÓN PLANIFICACIÓN POR UNIDADES
 # ══════════════════════════════════════════════════════════════════════════
 
-def corregir_planificacion(ws, log):
+def corregir_planificacion(ws, log, registro=None):
     """Aplica todas las correcciones a la hoja Planificación por unidades."""
     cambios_alta = 0
     cambios_media_j = 0
@@ -1467,8 +1554,12 @@ def corregir_planificacion(ws, log):
             actividad = ws.cell(r, COL['ACTIVIDAD']).value
             if not actividad:
                 # Fila sin actividad ni tipo: limpiar proc/instr huérfanos
-                proc_cell.value = None
-                instr_cell.value = None
+                if proc:
+                    _reg(registro, ws, proc_cell, 'Dato huérfano: procedimiento sin tipo', proc, None)
+                    proc_cell.value = None
+                if instr:
+                    _reg(registro, ws, instr_cell, 'Dato huérfano: instrumento sin tipo', instr, None)
+                    instr_cell.value = None
                 log.append(f'    [Plan F{r}] Datos huérfanos eliminados (L y N sin tipo evaluación)')
                 cambios_alta += 1
             # En ambos casos, si no hay tipo no hay correcciones evaluativas que aplicar
@@ -1483,29 +1574,42 @@ def corregir_planificacion(ws, log):
             log.append(f'    [Plan F{r}] Tipo: "{tipo}" → "{nuevo_tipo}"')
             tipo_cell.value = nuevo_tipo
             aplicar_azul(tipo_cell)
+            _reg(registro, ws, tipo_cell, 'Normalizar tipo de evaluación', tipo, nuevo_tipo)
             tipo = nuevo_tipo
             cambios_alta += 1
 
         # ── ALTA: normalizar Procedimiento ────────────────────────────────
-        if proc in PROC_MAP:
+        # Excepción: Cuestionario es procedimiento válido para evaluación Diagnóstica
+        # (y puede usarse en Formativas internas). Solo corregir en Sumativas.
+        # Fuente: Manual Diseño Instruccional UST, p. 18
+        _tipo_lower = str(tipo or '').lower()
+        _es_diagnostica = 'diagnóst' in _tipo_lower
+        _skip_cuestionario = (proc == 'Cuestionario' and _es_diagnostica)
+
+        if proc in PROC_MAP and not _skip_cuestionario:
             nuevo_proc = PROC_MAP[proc]
             log.append(f'    [Plan F{r}] Procedimiento: "{proc}" → "{nuevo_proc}"')
             proc_cell.value = nuevo_proc
             aplicar_azul(proc_cell)
+            _reg(registro, ws, proc_cell, 'Normalizar procedimiento de evaluación', proc, nuevo_proc)
             proc = nuevo_proc
             cambios_alta += 1
+        elif _skip_cuestionario:
+            log.append(f'    [Plan F{r}] Procedimiento "Cuestionario" conservado (Diagnóstica — válido)')
 
         # ── ALTA: normalizar Instrumento ──────────────────────────────────
         if instr == 'Pauta':
             log.append(f'    [Plan F{r}] Instrumento: "Pauta" → "Pauta de observación"')
             instr_cell.value = 'Pauta de observación'
             aplicar_azul(instr_cell)
+            _reg(registro, ws, instr_cell, 'Normalizar instrumento de evaluación', instr, 'Pauta de observación')
             instr = 'Pauta de observación'
             cambios_alta += 1
         elif instr == 'Rúbrica' and proc in PROC_INSTR_RÚBRICA_CONTEXTOS:
             log.append(f'    [Plan F{r}] Instrumento: "Rúbrica" → "Pauta de observación" (proc={proc})')
             instr_cell.value = 'Pauta de observación'
             aplicar_azul(instr_cell)
+            _reg(registro, ws, instr_cell, 'Normalizar instrumento (Rúbrica→Pauta en Producciones)', instr, 'Pauta de observación')
             instr = 'Pauta de observación'
             cambios_alta += 1
 
@@ -1516,6 +1620,7 @@ def corregir_planificacion(ws, log):
                 medio_cell.value = nuevo_medio
                 aplicar_azul(medio_cell)
                 log.append(f'    [Plan F{r}] Medio de entrega: None → "{nuevo_medio}"')
+                _reg(registro, ws, medio_cell, 'Inferir medio de entrega', None, nuevo_medio)
                 cambios_media_j += 1
 
         # ── MEDIA: Individual/Grupal (M) ───────────────────────────────────
@@ -1525,6 +1630,7 @@ def corregir_planificacion(ws, log):
             indiv_cell.value = nuevo_indiv
             aplicar_azul(indiv_cell)
             log.append(f'    [Plan F{r}] Individual/Grupal: None → "{nuevo_indiv}"')
+            _reg(registro, ws, indiv_cell, 'Inferir modalidad individual/grupal', None, nuevo_indiv)
             cambios_media_m += 1
 
         # ── BAJA: % = None → 0 ────────────────────────────────────────────
@@ -1532,6 +1638,7 @@ def corregir_planificacion(ws, log):
             pct_cell.value = 0
             aplicar_azul(pct_cell)
             log.append(f'    [Plan F{r}] %: None → 0')
+            _reg(registro, ws, pct_cell, '% vacío → 0', None, 0)
             cambios_baja += 1
 
     # ── Colorear filas por tipo de evaluación (al final, sin pisar fuente azul)
@@ -1671,15 +1778,17 @@ _ORTOGRAFIA_GENERAL = {
 }
 
 
-def corregir_lenguaje_actividades(ws, log):
+def corregir_lenguaje_actividades(ws, log, registro=None):
     """
     Corrige incoherencias de lenguaje en la columna Actividad (G):
       - "la docente" / "el docente" → "el o la docente" (lenguaje inclusivo UST)
       - Espacio faltante tras punto numerado: "2.Verbo" → "2. Verbo"
       - Verbos 3ª persona plural → 2ª persona singular (imperativo)
+      - Correcciones ortográficas de alta confianza
     Además registra advertencias para revisión manual:
       - Ítems que describen acción del docente (no instrucción al estudiante)
       - Ítems que son frases nominales sin verbo imperativo
+      - Bloques con ítems numerados sin "Propósito:" (Manual UST p.19)
     Devuelve el número de celdas modificadas.
     """
     celdas_modificadas = 0
@@ -1763,8 +1872,12 @@ def corregir_lenguaje_actividades(ws, log):
         if texto_nuevo != texto:
             cell.value = texto_nuevo
             aplicar_azul(cell)
+            resumen_cambios = '; '.join(cambios_celda)
             for c in cambios_celda:
                 log.append(f'    [Plan F{r}] Lenguaje actividad: {c}')
+            _reg(registro, ws, cell,
+                 f'Lenguaje/ortografía actividad ({resumen_cambios[:80]})',
+                 texto, texto_nuevo)
             celdas_modificadas += 1
 
         # ── 4. Advertencias por revisión manual ───────────────────────────
@@ -2266,11 +2379,12 @@ def procesar_asignatura(carpeta_asig, dry_run=False, programa=None, es_as=False)
     total_media_j = 0
     total_media_m = 0
     total_baja = 0
+    registro = []   # Registro estructurado de cambios para la hoja final
 
     # ── Síntesis didáctica ─────────────────────────────────────────────────
     if 'Síntesis didáctica' in hojas:
         log.append('\n  [Síntesis didáctica]')
-        n = corregir_sintesis(wb['Síntesis didáctica'], log)
+        n = corregir_sintesis(wb['Síntesis didáctica'], log, registro)
         total_sintesis = n
         if n == 0:
             log.append('    Sin cambios necesarios.')
@@ -2281,9 +2395,9 @@ def procesar_asignatura(carpeta_asig, dry_run=False, programa=None, es_as=False)
     total_lenguaje = 0
     if 'Planificación por unidades' in hojas:
         log.append('\n  [Planificación por unidades]')
-        a, mj, mm, b = corregir_planificacion(wb['Planificación por unidades'], log)
+        a, mj, mm, b = corregir_planificacion(wb['Planificación por unidades'], log, registro)
         total_alta, total_media_j, total_media_m, total_baja = a, mj, mm, b
-        total_lenguaje = corregir_lenguaje_actividades(wb['Planificación por unidades'], log)
+        total_lenguaje = corregir_lenguaje_actividades(wb['Planificación por unidades'], log, registro)
         if a + mj + mm + b + total_lenguaje == 0:
             log.append('    Sin cambios necesarios.')
     else:
@@ -2321,8 +2435,10 @@ def procesar_asignatura(carpeta_asig, dry_run=False, programa=None, es_as=False)
         nombre_salida = (nombre_revisado(os.path.basename(plan_path))
                          if es_original else os.path.basename(plan_path))
         dest = os.path.join(carpeta_revisado, nombre_salida)
+        escribir_registro_cambios(wb, registro)
         wb.save(dest)
         log.append(f'\n  💾 Guardado en: Revisado/{nombre_salida}')
+        log.append(f'  📋 Hoja "Registro de cambios": {len(registro)} cambio(s) documentado(s)')
 
     total = total_sintesis + total_alta + total_media_j + total_media_m + total_baja + total_lenguaje
     log.append(f'\n  RESUMEN DE CAMBIOS:')

@@ -116,28 +116,34 @@ def extraer_programa_pdf(pdf_path):
         m = re.search(r'HORAS\s+TPE\*?\s*:\s*(\d+)', texto, re.IGNORECASE)
         programa['horas_tpe'] = int(m.group(1)) if m else None
 
-        # Unidades (sección V UNIDADES DE APRENDIZAJE — primera aparición)
-        m_sec = re.search(
-            r'V\s+UNIDADES\s+DE\s+APRENDIZAJE\s*\n(.*?)(?:VI\s+DESGLOSE|VII\s+METODOLOGÍA)',
-            texto, re.IGNORECASE | re.DOTALL
-        )
-        bloque_unidades = m_sec.group(1) if m_sec else texto
-        unidades_raw = re.findall(
-            r'UNIDAD\s+([IVX]+)\s+(.*?)\s+(\d+)\s+HORAS\s+PEDAGÓGICAS',
-            bloque_unidades, re.IGNORECASE
-        )
-        # Deduplicar conservando orden
-        vistos = set()
-        programa['unidades'] = []
-        for n, nom, h in unidades_raw:
-            key = n.upper()
-            if key not in vistos:
-                vistos.add(key)
-                programa['unidades'].append({
-                    'numero': key,
-                    'nombre': re.sub(r'\s+', ' ', nom).strip(),
-                    'horas': int(h)
-                })
+        # Unidades — método primario: extracción por tablas (pdfplumber)
+        total_tabla, unidades_tabla = _extraer_horas_pdf_tabla(pdf_path)
+        programa['total_pedagogicas'] = total_tabla
+
+        if unidades_tabla:
+            programa['unidades'] = unidades_tabla
+        else:
+            # Fallback: texto + regex (estructura antigua de programas)
+            m_sec = re.search(
+                r'V\s+UNIDADES\s+DE\s+APRENDIZAJE\s*\n(.*?)(?:VI\s+DESGLOSE|VII\s+METODOLOGÍA)',
+                texto, re.IGNORECASE | re.DOTALL
+            )
+            bloque_unidades = m_sec.group(1) if m_sec else texto
+            unidades_raw = re.findall(
+                r'UNIDAD\s+([IVX]+)\s+(.*?)\s+(\d+)\s+HORAS\s+PEDAGÓGICAS',
+                bloque_unidades, re.IGNORECASE
+            )
+            vistos = set()
+            programa['unidades'] = []
+            for n, nom, h in unidades_raw:
+                key = n.upper()
+                if key not in vistos:
+                    vistos.add(key)
+                    programa['unidades'].append({
+                        'numero': key,
+                        'nombre': re.sub(r'\s+', ' ', nom).strip(),
+                        'horas': int(h)
+                    })
 
         # Ponderaciones por unidad (sección PONDERACIÓN)
         ponderaciones = re.findall(r'[Uu]nidad\s+([IVX]+)\s+(\d+)%', texto)
@@ -151,6 +157,82 @@ def extraer_programa_pdf(pdf_path):
         programa['_error'] = str(e)
 
     return programa
+
+
+def _extraer_horas_pdf_tabla(pdf_path):
+    """
+    Extrae horas del programa de asignatura usando tablas pdfplumber.
+    Método más fiable que el regex sobre texto plano para PDFs UST actuales.
+
+    Retorna (total_pedagogicas, unidades) donde:
+      total_pedagogicas — int o None
+      unidades          — lista de dicts {'numero': 'I', 'nombre': '...', 'horas': N}
+    """
+    ROMANO     = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII']
+    pat_horas  = re.compile(r'\((\d+)(?:\s*horas?)?\)', re.IGNORECASE)
+    pat_examen = re.compile(r'[Ee]xamen[^0-9]*(\d+)\s*horas?', re.IGNORECASE)
+
+    total_ped = None
+    unidades  = []
+
+    try:
+        import pdfplumber  # importación local: módulo opcional
+        with pdfplumber.open(pdf_path) as pdf:
+            for page in pdf.pages:
+                tables = page.extract_tables()
+                for table in tables:
+                    if not table:
+                        continue
+                    flat = ' '.join(str(c or '') for row in table for c in row)
+
+                    # ── Tabla de distribución de horas ────────────────────
+                    if 'TPE' in flat and 'Cátedra' in flat and total_ped is None:
+                        header_ok = False
+                        for row in table:
+                            cells  = [str(c or '').strip() for c in row]
+                            joined = ' '.join(cells)
+                            if 'Totales' in cells and 'Cátedra' in joined:
+                                header_ok = True
+                                continue
+                            if header_ok:
+                                nums = [int(str(c).strip()) for c in row
+                                        if str(c or '').strip().isdigit()]
+                                if len(nums) >= 3:
+                                    total_ped = nums[-1]   # último = Totales pedagógicas
+                                    break
+
+                    # ── Tabla de contenidos por unidad ────────────────────
+                    if 'Nombre de la unidad' in flat and not unidades:
+                        unit_idx = 0
+                        for row in table:
+                            cell0 = str(row[0] or '').strip()
+                            m = pat_horas.search(cell0)
+                            if m:
+                                nombre = re.sub(r'\s*\(\d+.*', '', cell0) \
+                                              .replace('\n', ' ').strip()
+                                romano = ROMANO[unit_idx] if unit_idx < len(ROMANO) \
+                                         else str(unit_idx + 1)
+                                unidades.append({
+                                    'numero': romano,
+                                    'nombre': re.sub(r'\s+', ' ', nombre).strip(),
+                                    'horas': int(m.group(1)),
+                                })
+                                unit_idx += 1
+                                continue
+                            # Detectar examen en cualquier celda de la fila
+                            for cell in row:
+                                me = pat_examen.search(str(cell or ''))
+                                if me:
+                                    unidades.append({
+                                        'numero': 'EXAMEN',
+                                        'nombre': 'Evaluación final',
+                                        'horas': int(me.group(1)),
+                                    })
+                                    break
+    except Exception:
+        pass   # pdfplumber no disponible o PDF corrupto — caller usa fallback
+
+    return total_ped, unidades
 
 
 def verificar_contra_programa(wb, programa, log):
@@ -471,6 +553,260 @@ ESCALA_ESTANDAR = [
      'Asignación de horas de TPE consistentes con la carga del estudiante',
      'manual'),
 ]
+
+
+# ══════════════════════════════════════════════════════════════════════════
+#  TAXONOMÍA DE BLOOM — VERBOS PARA RESULTADOS DE APRENDIZAJE
+# ══════════════════════════════════════════════════════════════════════════
+# Fuente: Anderson & Krathwohl (2001), adaptado al español
+# Cada nivel incluye verbos en infinitivo que indican el tipo de aprendizaje
+
+BLOOM_VERBOS = {
+    # Nivel 1: Recordar (conocimiento factual y conceptual básico)
+    'recordar': {
+        'nivel': 1,
+        'descripcion': 'Recordar — recuperación de hechos y conceptos',
+        'verbos': {
+            'definir', 'describir', 'identificar', 'listar', 'reconocer',
+            'recordar', 'repetir', 'señalar', 'enumerar', 'nombrar',
+            'rotular', 'relatar', 'recitar', 'mencionar', 'indicar',
+            'localizar', 'encontrar', 'obtener', 'reproducir', 'adquirir',
+        },
+    },
+    # Nivel 2: Comprender (construcción de significado)
+    'comprender': {
+        'nivel': 2,
+        'descripcion': 'Comprender — interpretación y explicación',
+        'verbos': {
+            'comprender', 'explicar', 'interpretar', 'resumir', 'clasificar',
+            'comparar', 'contrastar', 'ejemplificar', 'inferir', 'parafrasear',
+            'traducir', 'representar', 'ilustrar', 'discutir', 'describir',
+            'predecir', 'asociar', 'distinguir', 'contextualizar', 'relacionar',
+        },
+    },
+    # Nivel 3: Aplicar (uso de procedimientos en situaciones dadas)
+    'aplicar': {
+        'nivel': 3,
+        'descripcion': 'Aplicar — ejecución y implementación',
+        'verbos': {
+            'aplicar', 'demostrar', 'ejecutar', 'implementar', 'utilizar',
+            'calcular', 'completar', 'construir', 'emplear', 'llevar a cabo',
+            'manipular', 'operar', 'practicar', 'producir', 'resolver',
+            'usar', 'desarrollar', 'realizar', 'efectuar', 'hacer',
+            'ejecutar', 'interpretar', 'ilustrar', 'modificar', 'preparar',
+        },
+    },
+    # Nivel 4: Analizar (descomposición en partes y relaciones)
+    'analizar': {
+        'nivel': 4,
+        'descripcion': 'Analizar — diferenciación y organización',
+        'verbos': {
+            'analizar', 'diferenciar', 'examinar', 'organizar', 'categorizar',
+            'contrastar', 'estructurar', 'integrar', 'separar', 'desglosar',
+            'investigar', 'correlacionar', 'ordenar', 'descomponer',
+            'comparar', 'criticar', 'debatir', 'examinar', 'sintetizar',
+        },
+    },
+    # Nivel 5: Evaluar (juicio basado en criterios)
+    'evaluar': {
+        'nivel': 5,
+        'descripcion': 'Evaluar — verificación y crítica',
+        'verbos': {
+            'evaluar', 'juzgar', 'criticar', 'justificar', 'defender',
+            'argumentar', 'valorar', 'verificar', 'validar', 'revisar',
+            'seleccionar', 'elegir', 'decidir', 'apreciar', 'estimar',
+            'contrastar', 'fundamentar', 'sustentar', 'cuestionar',
+            'determinar', 'concluir', 'priorizar', 'diagnosticar',
+        },
+    },
+    # Nivel 6: Crear (ensamblaje de elementos en un todo nuevo)
+    'crear': {
+        'nivel': 6,
+        'descripcion': 'Crear — generación y planificación',
+        'verbos': {
+            'crear', 'diseñar', 'construir', 'desarrollar', 'planificar',
+            'elaborar', 'formular', 'generar', 'inventar', 'producir',
+            'proponer', 'idear', 'concebir', 'establecer', 'organizar',
+            'componer', 'ensamblar', 'formalizar', 'implementar', 'sistematizar',
+            'programar', 'proyectar', 'diseñar', 'elaborar', 'rediseñar',
+        },
+    },
+}
+
+# Diccionario inverso para búsqueda rápida: verbo -> nivel
+_VERBO_A_NIVEL = {}
+for cat, datos in BLOOM_VERBOS.items():
+    for v in datos['verbos']:
+        _VERBO_A_NIVEL[v.lower()] = cat
+
+# Verbos débiles o genéricos que NO indican aprendizaje medible
+VERBOS_DEBILES = {
+    'saber', 'conocer', 'entender', 'comprender bien', 'aprender',
+    'estudiar', 'revisar', 'ver', 'leer', 'escuchar', 'observar',
+    'conocer sobre', 'tener conocimiento', 'estar familiarizado',
+    'tener idea', 'tener nociones', 'pensar sobre',
+}
+
+
+def extraer_verbo_inicial(texto: str) -> str | None:
+    """
+    Extrae el verbo en infinitivo al inicio de un RA.
+    Normaliza acentos y mayúsculas.
+    """
+    if not texto:
+        return None
+    texto = str(texto).strip().lower()
+    # Eliminar numeración tipo "RA1:", "1.", "a)", etc.
+    texto = re.sub(r'^(?:ra\s*\d+\s*:?\s*|\d+\.\s*|[a-z]\)\s*)', '', texto, flags=re.I)
+    texto = texto.strip()
+    # Buscar verbo al inicio (hasta espacio o preposición)
+    match = re.match(r'^([a-záéíóúüñ]+)(?:\s|$|,)', texto)
+    if match:
+        return match.group(1)
+    return None
+
+
+def validar_verbos_bloom_ra(texto_ra: str) -> dict:
+    """
+    Valida si un Resultado de Aprendizaje inicia con verbo de Bloom.
+
+    Retorna:
+    {
+        'verbo': str | None,           # verbo detectado
+        'nivel': str | None,            # nivel Bloom ('recordar'..'crear')
+        'nivel_num': int | None,        # 1-6
+        'valido': bool,                 # tiene verbo Bloom
+        'debil': bool,                  # es verbo débil/genérico
+        'mensaje': str,                 # descripción del resultado
+    }
+    """
+    verbo = extraer_verbo_inicial(texto_ra)
+    resultado = {
+        'verbo': verbo,
+        'nivel': None,
+        'nivel_num': None,
+        'valido': False,
+        'debil': False,
+        'mensaje': '',
+    }
+
+    if not verbo:
+        resultado['mensaje'] = 'No se detectó verbo al inicio'
+        return resultado
+
+    if verbo in VERBOS_DEBILES:
+        resultado['debil'] = True
+        resultado['mensaje'] = f'«{verbo}» es verbo débil — no indica aprendizaje medible'
+        return resultado
+
+    if verbo in _VERBO_A_NIVEL:
+        nivel = _VERBO_A_NIVEL[verbo]
+        datos = BLOOM_VERBOS[nivel]
+        resultado['nivel'] = nivel
+        resultado['nivel_num'] = datos['nivel']
+        resultado['valido'] = True
+        resultado['mensaje'] = f'«{verbo}» — Nivel {datos["nivel"]}: {datos["descripcion"]}'
+        return resultado
+
+    # Verbo no reconocido (podría ser válido pero no está en el diccionario)
+    resultado['mensaje'] = f'«{verbo}» no está en taxonomía Bloom (verificar manualmente)'
+    return resultado
+
+
+def verificar_verbos_bloom_planificacion(wb, log: list) -> tuple[int, int, list]:
+    """
+    Verifica los verbos de Bloom en todos los RA de la planificación.
+
+    Busca RA en:
+    - Síntesis didáctica: filas 25-32, columna A
+    - Planificación por unidades: columna A (COL['RA'])
+
+    Parámetros
+    ----------
+    wb : Workbook
+        Libro de planificación
+    log : list
+        Lista para agregar mensajes de verificación
+
+    Retorna
+    ------
+    (n_validos, n_problemas, detalles)
+    donde detalles es lista de dict con info de cada RA
+    """
+    n_validos = 0
+    n_problemas = 0
+    detalles = []
+
+    log.append('\n  [Verificación Taxonomía de Bloom — Resultados de Aprendizaje]')
+
+    # 1. RA en Síntesis didáctica
+    ws_sint = wb['Síntesis didáctica'] if 'Síntesis didáctica' in wb.sheetnames else None
+    if ws_sint:
+        log.append('    Síntesis didáctica:')
+        for fila in range(25, 33):
+            ra_texto = ws_sint.cell(fila, 1).value
+            if not ra_texto:
+                continue
+
+            resultado = validar_verbos_bloom_ra(ra_texto)
+            detalles.append({
+                'hoja': 'Síntesis didáctica',
+                'fila': fila,
+                'texto': str(ra_texto)[:80],
+                **resultado
+            })
+
+            icono = '✅' if resultado['valido'] else ('⚠️' if resultado['debil'] else '❓')
+            log.append(f'      {icono} Fila {fila}: {resultado["mensaje"]}')
+            if resultado['valido']:
+                n_validos += 1
+            elif resultado['debil']:
+                n_problemas += 1
+
+    # 2. RA en Planificación por unidades (columna A)
+    ws_plan = wb['Planificación por unidades'] if 'Planificación por unidades' in wb.sheetnames else None
+    if ws_plan:
+        log.append('    Planificación por unidades:')
+        ra_vistos = set()  # evitar duplicados
+
+        for row in ws_plan.iter_rows(min_row=4):
+            ra_texto = row[COL['RA'] - 1].value if hasattr(row[COL['RA'] - 1], 'value') else row[COL['RA'] - 1]
+            if not ra_texto:
+                continue
+
+            ra_str = str(ra_texto).strip()
+            if ra_str in ra_vistos:
+                continue
+            ra_vistos.add(ra_str)
+
+            resultado = validar_verbos_bloom_ra(ra_texto)
+            detalles.append({
+                'hoja': 'Planificación por unidades',
+                'fila': row[COL['RA'] - 1].row if hasattr(row[COL['RA'] - 1], 'row') else 0,
+                'texto': ra_str[:80],
+                **resultado
+            })
+
+            icono = '✅' if resultado['valido'] else ('⚠️' if resultado['debil'] else '❓')
+            fila_num = row[COL['RA'] - 1].row if hasattr(row[COL['RA'] - 1], 'row') else '?'
+            log.append(f'      {icono} Fila {fila_num}: {resultado["mensaje"]}')
+            if resultado['valido']:
+                n_validos += 1
+            elif resultado['debil']:
+                n_problemas += 1
+
+    # Resumen
+    total_ra = len(detalles)
+    if total_ra == 0:
+        log.append('    ⚠️ No se encontraron RA para verificar')
+    else:
+        log.append(
+            f'\n    Bloom: {n_validos}/{total_ra} RA con verbo válido, '
+            f'{n_problemas} con verbo débil, '
+            f'{total_ra - n_validos - n_problemas} sin verbo reconocido'
+        )
+
+    return n_validos, n_problemas, detalles
 
 
 # ── Colores ───────────────────────────────────────────────────────────────
@@ -1997,12 +2333,72 @@ _ORTOGRAFIA_GENERAL = {
     'asigantura':    'asignatura',
     'evalaucion':    'evaluación',
     'aprendizaje':   'aprendizaje',   # no requiere tilde, confirma
+    'activdad':      'actividad',
+    'resolucion':    'resolución',
+    'asignatrua':    'asignatura',
+    # Tildes faltantes — palabras académicas adicionales
+    'analisis':      'análisis',
+    'sintesis':      'síntesis',
+    'hipotesis':     'hipótesis',
+    'enfasis':       'énfasis',
+    'parentesis':    'paréntesis',
+    'tesis':         'tesis',          # no requiere tilde, confirma
+    'areas':         'áreas',
+    'area':          'área',
+    'indice':        'índice',
+    'ambito':        'ámbito',
+    'caracter':      'carácter',
+    'modelo':        'modelo',         # no requiere tilde, confirma
+    'numero':        'número',
+    'calculo':       'cálculo',
+    'grafico':       'gráfico',
+    'simbolo':       'símbolo',
+    'exito':         'éxito',
+    'metodo':        'método',
+    'proceso':       'proceso',        # no requiere tilde
+    'objetivo':      'objetivo',       # no requiere tilde
+    'diagnostico':   'diagnóstico',
+    'pronostico':    'pronóstico',
+    'indice':        'índice',
+    'practicas':     'prácticas',
+    'practica':      'práctica',
+    'tecnica':       'técnica',
+    'tecnicas':      'técnicas',
+    'estatica':      'estática',
+    'dinamica':      'dinámica',
+    'economico':     'económico',
+    'economica':     'económica',
+    'historico':     'histórico',
+    'historica':     'histórica',
+    'geografico':    'geográfico',
+    'bibliografico': 'bibliográfico',
+    'bibliografica': 'bibliográfica',
+    'matematico':    'matemático',
+    'matematica':    'matemática',
+    'fisico':        'físico',
+    'quimico':       'químico',
+    'biologico':     'biológico',
+    'ecologico':     'ecológico',
+    'ecologia':      'ecología',
+    'taxonomia':     'taxonomía',
+    'filosofia':     'filosofía',
+    'sociologia':    'sociología',
+    'psicologia':    'psicología',
+    'antropologia':  'antropología',
     # Confusiones ortográficas — no corregir automáticamente
     'haber':         None,   # depende de contexto (hay / haber)
     'a ver':         None,   # podría ser correcto
     # Palabras con b/v
     'havlar':        'hablar',
     'havitual':      'habitual',
+    'tambien':       'también',
+    'tambien ':      'también ',
+    'ademas':        'además',
+    'segun':         'según',
+    'despues':       'después',
+    'antes ':        'antes ',         # no requiere tilde, confirma
+    'solo ':         None,             # "solo" (adverbio) sin tilde es válido modernamente
+    'aun ':          'aún ',           # ya definido arriba (duplicado eliminado implícito)
 }
 
 
@@ -2222,38 +2618,84 @@ def corregir_lenguaje_actividades(ws, log, registro=None):
 
 def _detectar_col_horas(ws):
     """
-    Detecta la columna de horas en la hoja de planificación escaneando
-    las primeras 3 filas en busca de 'hora' en el encabezado.
+    Detecta la primera columna de horas pedagógicas en la hoja de planificación,
+    buscando 'hora', 'hrs.' o 'horas' (case insensitive) en las primeras 4 filas.
+    Excluye columnas TPE (trabajo personal del estudiante).
     Devuelve número de columna (1-based) o None si no se encuentra.
     """
-    for fila in range(1, 4):
+    for fila in range(1, 5):
         for col in range(1, ws.max_column + 1):
-            val = ws.cell(fila, col).value
-            if val and 'hora' in str(val).lower():
+            val = str(ws.cell(fila, col).value or '').lower()
+            if not val:
+                continue
+            # Detectar encabezados de horas pedagógicas, excluyendo TPE
+            if ('hora' in val or 'hrs' in val) and 'tpe' not in val:
                 return col
     return None
 
 
 def _leer_horas_sintesis(ws_sint):
     """
-    Lee horas por unidad desde la Síntesis didáctica (filas 18-21, col G).
-    Devuelve dict {nombre_unidad → horas} con horas como int/float.
-    También devuelve el total de horas del curso (si existe).
-    """
-    horas_por_unidad = {}
-    if not ws_sint:
-        return horas_por_unidad
+    Lee horas por unidad desde la Síntesis didáctica.
+    Busca dinámicamente el encabezado ('Nombre de la unidad o módulo' / 'Horas
+    pedagógicas') y lee desde la fila siguiente hasta encontrar la fila TOTAL.
 
-    for fila in range(18, 26):   # ampliar rango por si hay más de 4 unidades
-        nombre = ws_sint.cell(fila, 2).value   # col B — nombre unidad
-        horas  = ws_sint.cell(fila, 7).value   # col G — horas asignadas
+    Devuelve (horas_por_unidad, total_horas):
+      horas_por_unidad — dict {nombre_unidad → float}
+      total_horas      — float o None
+    """
+    horas_por_unidad: dict[str, float] = {}
+    total_horas = None
+
+    if not ws_sint:
+        return horas_por_unidad, total_horas
+
+    # Buscar la fila de encabezado de la tabla de unidades
+    fila_inicio = None
+    col_nombre  = 2    # col B por defecto
+    col_horas   = 7    # col G por defecto
+    max_row     = ws_sint.max_row or 40
+
+    for fila in range(1, min(max_row + 1, 35)):
+        b = str(ws_sint.cell(fila, 2).value or '').strip()
+        g = str(ws_sint.cell(fila, 7).value or '').strip()
+        if ('nombre' in b.lower() and 'unidad' in b.lower()) \
+                or 'horas pedagógicas' in g.lower():
+            fila_inicio = fila + 1
+            break
+
+    # Fallback: si no encontró header, leer desde fila 17 (formato estándar UST)
+    if fila_inicio is None:
+        fila_inicio = 17
+
+    for fila in range(fila_inicio, fila_inicio + 12):
+        nombre = ws_sint.cell(fila, col_nombre).value
+        horas  = ws_sint.cell(fila, col_horas).value
+
+        # Fila TOTAL: buscar "TOTAL" en cualquier celda de la fila
+        row_values = [str(ws_sint.cell(fila, c).value or '') for c in range(1, 10)]
+        if any('TOTAL' in v.upper() for v in row_values):
+            try:
+                total_horas = float(str(horas).replace(',', '.'))
+            except (ValueError, TypeError):
+                pass
+                break   # el TOTAL marca el fin de la sección de unidades
+
+        if nombre is None and horas is None:
+            continue
+
         if nombre and horas:
             try:
                 h = float(str(horas).replace(',', '.'))
                 horas_por_unidad[str(nombre).strip()] = h
             except (ValueError, TypeError):
                 pass
-    return horas_por_unidad
+
+    # Fallback: si el total era una fórmula (=SUM…), calcularlo como suma de unidades
+    if total_horas is None and horas_por_unidad:
+        total_horas = sum(horas_por_unidad.values())
+
+    return horas_por_unidad, total_horas
 
 
 def _horas_por_unidad_plan(ws_plan, col_horas):
@@ -2306,7 +2748,11 @@ def _horas_por_unidad_plan(ws_plan, col_horas):
 
 def verificar_horas(ws_plan, ws_sint, programa, log):
     """
-    Verifica la distribución de horas en dos niveles:
+    Verifica la distribución de horas en tres niveles:
+
+    Nivel 0 — Total global PDF vs Excel:
+      Total horas pedagógicas del programa (tabla distribución) vs total
+      declarado en la Síntesis didáctica.
 
     Nivel 1 — Unidad vs Programa:
       Las horas declaradas por unidad en la Síntesis deben coincidir con
@@ -2320,23 +2766,35 @@ def verificar_horas(ws_plan, ws_sint, programa, log):
     errores = []
     oks     = []
 
+    horas_sint, total_sint = _leer_horas_sintesis(ws_sint)
+
+    # ── Nivel 0: Total PDF vs total Síntesis ──────────────────────────────
+    total_pdf = (programa or {}).get('total_pedagogicas')
+    if total_pdf is not None and total_sint is not None:
+        diff0 = abs(total_pdf - total_sint)
+        if diff0 <= 1:
+            oks.append(
+                f'Total global: programa={int(total_pdf)}h = Síntesis={int(total_sint)}h ✓')
+        else:
+            errores.append(
+                f'Total global: programa={int(total_pdf)}h ≠ Síntesis={int(total_sint)}h '
+                f'(diferencia {diff0:.0f}h)')
+
     # ── Nivel 1: Síntesis vs Programa ─────────────────────────────────────
     if programa and not programa.get('_error') and programa.get('unidades'):
-        horas_sint = _leer_horas_sintesis(ws_sint)
+        # Construir mapa romano → horas del programa (excluir EXAMEN para el match posicional)
+        unidades_prog = [u for u in programa['unidades'] if u['numero'] != 'EXAMEN']
+        prog_horas    = {u['numero']: u['horas'] for u in unidades_prog}
 
-        # Construir mapa romano → horas del programa
-        prog_horas = {u['numero']: u['horas'] for u in programa['unidades']}
-        prog_nombres = {u['numero']: u['nombre'] for u in programa['unidades']}
-
-        # Intentar match Síntesis → romano por posición (Unidad I=pos 0, II=pos 1…)
-        ROMANO = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII']
-        sint_lista = list(horas_sint.items())   # [(nombre, horas), …]
+        ROMANO     = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII']
+        sint_lista = [(n, h) for n, h in horas_sint.items()
+                      if not re.search(r'examen|evaluación final', n, re.IGNORECASE)]
 
         for i, (nombre_sint, hrs_sint) in enumerate(sint_lista):
             num_romano = ROMANO[i] if i < len(ROMANO) else None
 
             # Intentar leer romano desde el nombre ("Unidad I", "Módulo II"…)
-            m = re.search(r'\b([IVX]+)\b', str(nombre_sint))
+            m = re.search(r'\b([IVX]{1,4})\b', str(nombre_sint))
             if m:
                 num_romano = m.group(1).upper()
 
@@ -2353,7 +2811,6 @@ def verificar_horas(ws_plan, ws_sint, programa, log):
                         f'Síntesis={int(hrs_sint)}h ≠ programa={hrs_prog}h '
                         f'(diferencia {diff:.0f}h)')
             elif horas_sint:
-                # Sin programa: al menos informar lo que encontramos
                 oks.append(f'{nombre_sint[:35]}: {int(hrs_sint)}h declaradas en Síntesis')
     else:
         log.append('    ℹ️  Nivel 1 omitido: sin datos de programa oficial disponibles')
@@ -2364,22 +2821,17 @@ def verificar_horas(ws_plan, ws_sint, programa, log):
 
         if col_horas:
             totales_u, por_mom = _horas_por_unidad_plan(ws_plan, col_horas)
-            horas_sint = _leer_horas_sintesis(ws_sint)
-            SINT_LISTA = list(horas_sint.items())
-            ROMANO     = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII']
-            EXCLUIR    = {'total', 'evaluación final', 'lga', 'examen'}
+            EXCLUIR = {'total', 'evaluación final', 'lga', 'examen'}
 
             for unidad, hrs_total_plan in totales_u.items():
                 if any(ex in unidad.lower() for ex in EXCLUIR):
                     continue
 
-                momentos  = por_mom.get(unidad, {})
-                hrs_suma  = sum(momentos.values())
-                diff_int  = abs(hrs_suma - hrs_total_plan)
+                momentos = por_mom.get(unidad, {})
+                hrs_suma = sum(momentos.values())
+                diff_int = abs(hrs_suma - hrs_total_plan)
+                u_corta  = unidad[:35]
 
-                u_corta = unidad[:35]
-
-                # Verificar que los momentos suman el total de la unidad
                 if diff_int <= 0.5:
                     oks.append(f'{u_corta}: momentos suman {hrs_suma:.0f}h = total unidad ✓')
                 else:
@@ -2390,11 +2842,9 @@ def verificar_horas(ws_plan, ws_sint, programa, log):
                         f'{u_corta}: momentos suman {hrs_suma:.0f}h ≠ total {hrs_total_plan:.0f}h '
                         f'({detalle_mom})')
 
-                # Verificar presencia de cada tipo de momento
                 mom_lower = {str(k).lower(): v for k, v in momentos.items()}
                 for lbl in ('preparación', 'desarrollo', 'trabajo independiente'):
-                    tiene = any(lbl in k for k in mom_lower)
-                    if not tiene:
+                    if not any(lbl in k for k in mom_lower):
                         errores.append(
                             f'{u_corta}: sin horas asignadas a "{lbl.capitalize()}"')
 
@@ -2404,7 +2854,7 @@ def verificar_horas(ws_plan, ws_sint, programa, log):
                 '(verifica que el encabezado contenga "hora")')
 
     # ── Reporte ───────────────────────────────────────────────────────────
-    log.append('\n  [Verificación de horas — Síntesis vs Programa y distribución por momentos]')
+    log.append('\n  [Verificación de horas — Total / Síntesis vs Programa / Momentos]')
     for o in oks:
         log.append(f'    ✅ {o}')
     for e in errores:
@@ -2649,7 +3099,7 @@ _LT_MIN_CHARS   = 30    # ignorar celdas muy cortas
 _LT_PAUSA_SEG   = 3.5   # pausa entre llamadas (free tier ~20 req/min)
 
 # Flag global para activar autocorrección conservadora
-_LANGUAGETOOL_AUTOCORREGIR = False
+_LANGUAGETOOL_AUTOCORREGIR = True   # aplica correcciones seguras (tildes, typos claros)
 
 # Reglas de LanguageTool consideradas SEGURAS para autocorrección
 # Estas son correcciones ortográficas unívocas o errores gramaticales simples
@@ -2781,7 +3231,7 @@ def revisar_con_languagetool(texto):
             resultado = json.loads(resp.read().decode('utf-8'))
         return resultado.get('matches', [])
     except Exception:
-        return []
+        return None  # señal de fallo de conexión — los llamadores buscan None
 
 
 def _lt_fragmento(texto, offset, largo, max_ctx=40):
@@ -3198,6 +3648,9 @@ def procesar_asignatura(carpeta_asig, dry_run=False, programa=None, es_as=False)
     # ── Verificación contra programa oficial (si se proveyó PDF) ───────────
     n_discrepancias = verificar_contra_programa(wb, programa, log)
 
+    # ── Verificación Taxonomía de Bloom en RA ───────────────────────────────
+    n_bloom_ok, n_bloom_prob, _ = verificar_verbos_bloom_planificacion(wb, log)
+
     # ── Verificación A+Se (si corresponde) ──────────────────────────────
     n_as_ok = n_as_err = n_as_manual = 0
     if es_as:
@@ -3233,6 +3686,7 @@ def procesar_asignatura(carpeta_asig, dry_run=False, programa=None, es_as=False)
     log.append(f'    🔵 Celdas modificadas marcadas con fuente azul (#0070C0)')
     log.append(f'    📖 Verificación momentos (Manual UST): {n_mom_ok}✅  {n_mom_adv}⚠️ advertencias')
     log.append(f'    ⏱️  Verificación de horas: {n_hrs_ok}✅  {n_hrs_err}❌')
+    log.append(f'    🎯 Taxonomía de Bloom (RA): {n_bloom_ok}✅ verbos correctos, {n_bloom_prob}⚠️ verbos débiles')
     if programa:
         log.append(f'    📄 Verificación vs programa: {n_discrepancias} discrepancia(s) encontrada(s)')
     if es_as:

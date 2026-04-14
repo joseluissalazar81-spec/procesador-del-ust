@@ -194,27 +194,30 @@ st.markdown("""
     /* ── Checkbox ── */
     .stCheckbox label { color: #004d26; font-weight: 500; }
 
-    /* ── Botones por instancia ── */
-    /* Instancia 1: verde institucional (base) */
-    div[data-testid="stTabs"] > div > div:nth-child(1) button[kind="primary"] {
-        background-color: #006633 !important;
+    /* ── Botones por instancia (colores pasteles institucionales) ── */
+    /* Instancia 1 — verde menta pastel */
+    div[data-testid="stTabsContent"]:nth-of-type(1) button[kind="primary"] {
+        background-color: #4A9068 !important;
+        border-color:     #4A9068 !important;
     }
-    div[data-testid="stTabs"] > div > div:nth-child(1) button[kind="primary"]:hover {
-        background-color: #004d26 !important;
+    div[data-testid="stTabsContent"]:nth-of-type(1) button[kind="primary"]:hover {
+        background-color: #357a52 !important;
     }
-    /* Instancia 2: azul pizarra pastel */
-    div[data-testid="stTabs"] > div > div:nth-child(2) button[kind="primary"] {
-        background-color: #3B6FA0 !important;
+    /* Instancia 2 — azul cielo pastel */
+    div[data-testid="stTabsContent"]:nth-of-type(2) button[kind="primary"] {
+        background-color: #4A7FA5 !important;
+        border-color:     #4A7FA5 !important;
     }
-    div[data-testid="stTabs"] > div > div:nth-child(2) button[kind="primary"]:hover {
-        background-color: #2A5278 !important;
+    div[data-testid="stTabsContent"]:nth-of-type(2) button[kind="primary"]:hover {
+        background-color: #356488 !important;
     }
-    /* Instancia 3: lila pastel */
-    div[data-testid="stTabs"] > div > div:nth-child(3) button[kind="primary"] {
-        background-color: #7A5EA7 !important;
+    /* Instancia 3 — violeta lavanda pastel */
+    div[data-testid="stTabsContent"]:nth-of-type(3) button[kind="primary"] {
+        background-color: #8B6EAF !important;
+        border-color:     #8B6EAF !important;
     }
-    div[data-testid="stTabs"] > div > div:nth-child(3) button[kind="primary"]:hover {
-        background-color: #5E4580 !important;
+    div[data-testid="stTabsContent"]:nth-of-type(3) button[kind="primary"]:hover {
+        background-color: #70578f !important;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -443,7 +446,7 @@ with tab_i1:
 
     autocorregir_lt_i1 = st.checkbox(
         "✍️ Aplicar correcciones automáticas (conservador)",
-        value=False,
+        value=True,
         key="i1_autocorr",
         help="Aplica automáticamente las correcciones SEGURAS detectadas por LanguageTool "
              "(solo cambios unívocos: tildes faltantes, errores ortográficos claros). "
@@ -896,7 +899,7 @@ def _render_instancia_escala(tab, instancia_num, key_prefix):
 
         autocorregir_lt_x = st.checkbox(
             "✍️ Aplicar correcciones automáticas (conservador)",
-            value=False,
+            value=True,
             key=f"{key_prefix}_autocorr",
             help="Aplica automáticamente las correcciones SEGURAS detectadas por LanguageTool "
                  "(solo cambios unívocos: tildes faltantes, errores ortográficos claros).",

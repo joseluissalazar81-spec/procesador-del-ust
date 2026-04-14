@@ -36,7 +36,9 @@ def inicializar_db():
                 lt_correcciones     INTEGER DEFAULT 0,
                 tiene_as            INTEGER DEFAULT 0,
                 as_ok               INTEGER DEFAULT 0,
-                as_error            INTEGER DEFAULT 0
+                as_error            INTEGER DEFAULT 0,
+                bloom_ok            INTEGER DEFAULT 0,
+                bloom_debil         INTEGER DEFAULT 0
             )
         """)
         conn.commit()
@@ -69,8 +71,9 @@ def registrar(
                 archivo_nombre, total_correcciones,
                 criterios_ok, criterios_error, criterios_manual,
                 discrepancias_prog, lt_errores, lt_correcciones,
-                tiene_as, as_ok, as_error
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                tiene_as, as_ok, as_error,
+                bloom_ok, bloom_debil
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             datetime.now().strftime("%Y-%m-%d %H:%M"),
             instancia,
@@ -87,6 +90,8 @@ def registrar(
             int(metricas.get("tiene_as", False)),
             metricas.get("as_ok", 0),
             metricas.get("as_error", 0),
+            metricas.get("bloom_ok", 0),
+            metricas.get("bloom_debil", 0),
         ))
         conn.commit()
 
@@ -129,7 +134,9 @@ def resumen_errores() -> list[dict]:
                 SUM(total_correcciones)  AS total_corr,
                 SUM(criterios_error)     AS total_crit_err,
                 SUM(discrepancias_prog)  AS total_disc,
-                SUM(lt_errores)          AS total_lt
+                SUM(lt_errores)          AS total_lt,
+                SUM(bloom_ok)            AS total_bloom_ok,
+                SUM(bloom_debil)         AS total_bloom_debil
             FROM historial
             GROUP BY codigo_asignatura
             ORDER BY total_corr DESC

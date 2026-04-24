@@ -13,6 +13,11 @@ import re
 import urllib.request
 import urllib.parse
 
+# ── Modelos Ollama locales ────────────────────────────────────────────────────
+# NOTA: 16 GB RAM — no correr ambos al mismo tiempo.
+MODELO_VISION = "qwen2.5vl:latest"    # Para imágenes (requiere modelo multimodal)
+MODELO_TEXTO  = "qwen3.5:latest"      # Para texto largo
+
 # ── Configuración de backends ────────────────────────────────────────────────
 
 BACKENDS = ["ollama", "claude", "openai", "grok"]
@@ -20,7 +25,7 @@ BACKENDS = ["ollama", "claude", "openai", "grok"]
 BACKEND_DEFAULTS = {
     "ollama": {
         "url":   "http://localhost:11434/v1/chat/completions",
-        "model": "gemma3:12b",
+        "model": MODELO_TEXTO,
         "key":   "ollama",
     },
     "claude": {
@@ -42,41 +47,53 @@ BACKEND_DEFAULTS = {
 
 # ── Prompt del sistema ────────────────────────────────────────────────────────
 
-_SYSTEM_PROMPT = """Eres un experto en norma APA 7 para documentos académicos en español.
-Tu tarea es revisar y corregir referencias bibliográficas según APA 7.
+_SYSTEM_PROMPT = """Eres un experto en norma APA 7 para planificaciones didácticas e-learning de la Universidad Santo Tomás (UST), Chile.
+Tu tarea es revisar y corregir referencias y recursos bibliográficos en columna H del Excel de planificación.
 
-Reglas que debes aplicar:
-1. Formato de autor: Apellido, I. I. (iniciales con punto). Varios autores separados con coma y & antes del último.
+CONTEXTO UST — cada recurso declarado en la planificación debe tener 5 campos:
+  1. Título: nombre del recurso entre comillas
+  2. Autoría: Apellido, I. (año) en formato APA 7
+  3. Tipo: entre corchetes — [Video], [Diapositivas], [Artículo], [H5P], [Guía], [Podcast], [Libro], etc.
+  4. Acceso: "Disponible en el aula virtual" o URL completa (sin "Disponible en" antes de URL)
+  5. Extensión: N slides / N pgs. / N min.
+
+Ejemplo CORRECTO UST:
+  "Presentación S2 Ansiedad Precompetitiva". González, M. (2019). [Diapositivas, 16 slides]. Disponible en el aula virtual.
+
+Ejemplo INCOMPLETO (reportar como error):
+  González et al. (2019) — faltan tipo, acceso y extensión.
+
+REGLAS APA 7 adicionales:
+1. Autor: Apellido, I. I. (iniciales con punto). Varios autores: coma entre ellos, & antes del último.
 2. Año entre paréntesis seguido de punto: (2024).
-3. Título del artículo/recurso en redonda (no cursiva), mayúscula solo en primera palabra y nombres propios.
-4. Nombre de la revista/libro en cursiva (indica con *cursiva*).
-5. Volumen en cursiva, número de issue entre paréntesis sin cursiva.
-6. DOI con formato: https://doi.org/...
-7. URLs directas sin "Disponible en" precedente.
-8. Sin punto después de URL.
-9. Usar & (no "y") entre coautores.
-10. Recursos digitales incluyen tipo entre corchetes: [Video], [Diapositivas], [Material de estudio], etc.
+3. Título en redonda, mayúscula solo en primera palabra y nombres propios.
+4. Revista o libro en cursiva (indicar con *cursiva*).
+5. DOI con formato: https://doi.org/...
+6. URLs directas sin "Disponible en" precedente (excepto recursos del aula virtual UST).
+7. Sin punto después de URL.
+8. Usar & (no "y") entre coautores.
 
-RESPONDE ÚNICAMENTE con un JSON con esta estructura exacta, sin texto adicional:
+RESPONDE ÚNICAMENTE con este JSON exacto, sin texto adicional:
 {
   "referencias": [
     {
-      "original": "texto original de la referencia",
-      "corregida": "texto corregido en APA 7",
-      "cambios": ["descripción cambio 1", "descripción cambio 2"],
+      "original": "texto original",
+      "corregida": "texto corregido con los 5 campos completos",
+      "cambios": ["descripción del cambio 1", "descripción del cambio 2"],
       "ok": true
     }
   ]
 }
 
-Si una referencia ya está correcta, pon ok=true y corregida igual al original.
-Si no puedes corregirla, pon ok=false y explica en cambios."""
+- ok=true → referencia correcta (no se modifica)
+- ok=false → tiene errores (reportar qué falta en "cambios")
+- Si no puedes completar un campo (ej: no sabes la extensión), indícalo en "cambios" para revisión manual."""
 
-_USER_TEMPLATE = """Revisa y corrige estas referencias bibliográficas en APA 7:
+_USER_TEMPLATE = """Revisa y corrige estas referencias/recursos bibliográficos según APA 7 y el formato de 5 campos UST:
 
 {referencias}
 
-Devuelve el JSON con las correcciones."""
+Devuelve solo el JSON con las correcciones."""
 
 
 # ── Funciones de llamada por backend ─────────────────────────────────────────
@@ -101,6 +118,31 @@ def _llamar_openai_compat(url: str, api_key: str, model: str,
         data = json.loads(resp.read())
 
     return data["choices"][0]["message"]["content"]
+
+
+def _llamar_ollama(system: str, user_msg: str, model: str,
+                   timeout: int = 120) -> str:
+    """Llama a Ollama usando la API nativa /api/chat con think=False."""
+    payload = json.dumps({
+        "model":   model,
+        "think":   False,
+        "stream":  False,
+        "options": {"num_predict": 2048, "temperature": 0.1},
+        "messages": [
+            {"role": "system", "content": system},
+            {"role": "user",   "content": user_msg},
+        ],
+    }).encode("utf-8")
+
+    headers = {"Content-Type": "application/json"}
+    req = urllib.request.Request(
+        "http://localhost:11434/api/chat",
+        data=payload, headers=headers, method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        data = json.loads(resp.read())
+
+    return data["message"]["content"]
 
 
 def _llamar_claude(api_key: str, model: str, mensajes: list[dict],
@@ -136,7 +178,7 @@ def revisar_referencias_llm(
     backend:  str = "ollama",
     model:    str | None = None,
     api_key:  str = "",
-    timeout:  int = 45,
+    timeout:  int = 150,
 ) -> dict:
     """
     Revisa las referencias APA 7 de una celda usando LLM.
@@ -177,8 +219,14 @@ def revisar_referencias_llm(
                 mensajes=[{"role": "user", "content": user_msg}],
                 system=_SYSTEM_PROMPT, timeout=timeout,
             )
+        elif backend == "ollama":
+            # Usa API nativa de Ollama (evita bug de content vacío con qwen3)
+            respuesta = _llamar_ollama(
+                system=_SYSTEM_PROMPT, user_msg=user_msg,
+                model=model, timeout=timeout,
+            )
         else:
-            # Ollama, OpenAI, Grok — todos usan formato OpenAI-compatible
+            # OpenAI, Grok — formato OpenAI-compatible
             url = cfg["url"]
             mensajes = [
                 {"role": "system",  "content": _SYSTEM_PROMPT},
@@ -209,7 +257,7 @@ def revisar_columna_recursos_llm(
     model:        str | None = None,
     api_key:      str = "",
     autocorregir: bool = False,
-    timeout:      int  = 45,
+    timeout:      int  = 150,
 ) -> tuple[list[str], int, int]:
     """
     Revisa la columna H (Recursos) con LLM fila por fila.
@@ -298,3 +346,106 @@ def revisar_columna_recursos_llm(
         f'{n_correcciones} corrección(es) aplicada(s)'
     )
     return log, n_problemas, n_correcciones
+
+
+# ── Análisis visual de documentos con Qwen2.5-VL ─────────────────────────────
+
+_VISION_SYSTEM = """Eres un asistente experto en diseño instruccional y planificación didáctica para
+educación superior a distancia (UST). Analizas imágenes de documentos académicos.
+Responde siempre en español. Sé preciso, estructurado y orientado a mejorar la calidad
+de los recursos e-learning."""
+
+_VISION_PROMPTS = {
+    "planificacion": (
+        "Analiza esta planificación didáctica. Identifica:\n"
+        "1. Unidades y semanas visibles\n"
+        "2. Tipos de recursos (T1 videoclase, T2 Genially, T3 guía, T4 foro/quiz/tarea)\n"
+        "3. Momentos de aprendizaje (Preparación, Desarrollo, Trabajo Independiente)\n"
+        "4. Posibles inconsistencias o campos vacíos\n"
+        "5. Sugerencias de mejora\n\n"
+        "Organiza tu respuesta con encabezados claros."
+    ),
+    "programa": (
+        "Analiza este programa de asignatura. Extrae:\n"
+        "1. Nombre y código de la asignatura\n"
+        "2. Unidades temáticas y sus objetivos\n"
+        "3. Resultados de aprendizaje\n"
+        "4. Sistema de evaluación y ponderaciones\n"
+        "5. Bibliografía relevante\n\n"
+        "Estructura la respuesta en secciones."
+    ),
+    "genially": (
+        "Analiza este recurso Genially/infografía educativa. Evalúa:\n"
+        "1. Coherencia con estándares UST (paleta verde, tipografía, estructura)\n"
+        "2. Claridad del contenido educativo\n"
+        "3. Uso adecuado de elementos visuales\n"
+        "4. Propuesta de mejoras concretas\n\n"
+        "Sé específico en las observaciones."
+    ),
+    "libre": (
+        "Analiza este documento educativo y describe su contenido, "
+        "estructura y calidad en el contexto de e-learning universitario."
+    ),
+}
+
+
+def analizar_imagen_llm(
+    imagen_bytes: bytes,
+    tipo_analisis: str = "planificacion",
+    prompt_extra: str = "",
+    model: str = MODELO_VISION,
+    timeout: int = 90,
+) -> dict:
+    """
+    Analiza una imagen de documento con Qwen2.5-VL (Ollama local).
+
+    Parámetros
+    ----------
+    imagen_bytes   : bytes de la imagen (PNG, JPG, etc.)
+    tipo_analisis  : "planificacion" | "programa" | "genially" | "libre"
+    prompt_extra   : prompt adicional del usuario (se agrega al template)
+    model          : modelo Ollama (por defecto qwen2.5vl:latest)
+    timeout        : segundos máximo
+
+    Devuelve
+    --------
+    {"resultado": str, "error": str | None}
+    """
+    import base64
+
+    b64 = base64.b64encode(imagen_bytes).decode("utf-8")
+    prompt_base = _VISION_PROMPTS.get(tipo_analisis, _VISION_PROMPTS["libre"])
+    prompt_final = prompt_base + (f"\n\n{prompt_extra}" if prompt_extra.strip() else "")
+
+    payload = json.dumps({
+        "model": model,
+        "messages": [
+            {"role": "system", "content": _VISION_SYSTEM},
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text",      "text": prompt_final},
+                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}},
+                ],
+            },
+        ],
+        "temperature": 0.2,
+        "max_tokens":  2048,
+    }).encode("utf-8")
+
+    headers = {
+        "Content-Type":  "application/json",
+        "Authorization": "Bearer ollama",
+    }
+
+    try:
+        req = urllib.request.Request(
+            "http://localhost:11434/v1/chat/completions",
+            data=payload, headers=headers, method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            data = json.loads(resp.read())
+        texto = data["choices"][0]["message"]["content"]
+        return {"resultado": texto, "error": None}
+    except Exception as e:
+        return {"resultado": "", "error": str(e)}

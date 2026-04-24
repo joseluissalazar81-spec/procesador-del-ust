@@ -14,11 +14,25 @@ import streamlit as st
 import streamlit.components.v1 as components
 import sys, os, glob, shutil, tempfile, re
 from io import BytesIO
-import db_historial as hist
+
 import validar_planificacion as vp
 import dict_ust
 import apa_recursos as apa
 import apa_llm
+
+# ── Módulos DEL avanzados (escala + reescritura) ──────────────────────────────
+try:
+    from agente_criterios import evaluar_45_criterios, reporte_escala, CRITERIOS
+    from calculos_del import validar_horas_y_recursos, reporte_texto as calculos_reporte
+    from cruce_programa import (
+        extraer_programa_pdf as cruce_extraer_pdf,
+        cruzar_con_planificacion,
+    )
+    from reescritura_llm import reescribir_planificacion
+    ESCALA_OK = True
+except ImportError as _ei:
+    ESCALA_OK = False
+    CRITERIOS = []
 
 # ── Configuración de página ───────────────────────────────────────────────
 st.set_page_config(
@@ -39,205 +53,466 @@ except ImportError:
 # ── Estilos institucionales UST ───────────────────────────────────────────
 st.markdown("""
 <style>
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
 
-    /* ── Variables ── */
+    /* ══════════════════════════════════════════════
+       VARIABLES
+    ══════════════════════════════════════════════ */
     :root {
-        --ust-green:      #006633;
-        --ust-green-dark: #004d26;
-        --ust-green-mid:  #009450;
-        --ust-green-pale: #E8F5EE;
-        --ust-green-mist: #F0F7F4;
-        --ust-gold:       #C8A951;
-        --ust-border:     #C8E6D4;
-        --radius:         12px;
-        --shadow:         0 4px 20px rgba(0,102,51,0.10);
+        --g0: #002b14;  --g1: #004d26;  --g2: #006633;
+        --g3: #009450;  --g4: #00c46a;
+        --gp: #E8F5EE;  --gm: #F0F7F4;  --gb: #C8E6D4;
+        --gold:  #C8A951;  --gold-d: #9a7a2a;
+        --blue:  #2E5FA3;  --blue-l: #EBF2FB;
+        --purp:  #6B3FA0;  --purp-l: #F0EAFB;
+        --teal:  #007A7A;  --teal-l: #E6F5F5;
+        --slate: #4A6080;  --slate-l: #EDF0F4;
+        --amber: #C8A030;  --amber-l: #FBF3E0;
+        --indg:  #4C3AA0;  --indg-l: #EDE9FB;
+        --red:   #CC3333;  --red-l:  #FDDCDC;
+        --text:  #1a2332;  --text-m: #4a5568;  --text-l: #718096;
+        --bg:    #F4F8F5;
+        --white: #FFFFFF;
+        --r-sm: 8px;  --r-md: 12px;  --r-lg: 16px;  --r-xl: 20px;
+        --sh-xs: 0 1px 3px rgba(0,0,0,0.08);
+        --sh-sm: 0 2px 8px rgba(0,0,0,0.10);
+        --sh-md: 0 4px 16px rgba(0,0,0,0.10);
+        --sh-lg: 0 8px 32px rgba(0,102,51,0.12);
+        --t: 0.18s ease;
     }
 
-    /* ── Tipografía global ── */
+    /* ══════════════════════════════════════════════
+       BASE
+    ══════════════════════════════════════════════ */
     html, body, [class*="css"] {
-        font-family: 'Inter', sans-serif !important;
+        font-family: 'Inter', -apple-system, sans-serif !important;
+        color: var(--text);
     }
-
-    /* ── Fondo ── */
-    .stApp { background: linear-gradient(160deg,#EEF7F1 0%,#F5FAF7 100%); }
-
-    /* ── Contenedor principal ── */
+    .stApp {
+        background: linear-gradient(150deg, #E8F4EE 0%, #EEF6F2 50%, #F5FAF7 100%);
+    }
     .block-container {
-        max-width: 860px;
-        padding-top: 1.4rem;
-        padding-left: 2.8rem;
-        padding-right: 2.8rem;
-        background: #FFFFFF;
-        border-radius: var(--radius);
-        box-shadow: var(--shadow);
+        max-width: 880px;
+        padding: 1.2rem 2.4rem 2.4rem;
+        background: var(--white);
+        border-radius: var(--r-xl);
+        box-shadow: var(--sh-lg);
+        border: 1px solid rgba(0,102,51,0.06);
     }
 
-    /* ── Cabecera ── */
+    /* ══════════════════════════════════════════════
+       CABECERA
+    ══════════════════════════════════════════════ */
     .del-header {
-        background: linear-gradient(135deg, #004d26 0%, #006633 45%, #00a859 100%);
-        border-radius: 14px;
-        padding: 1.4rem 2rem 1.2rem;
-        margin-bottom: 1.4rem;
+        background: linear-gradient(135deg, var(--g0) 0%, var(--g1) 35%, var(--g2) 65%, var(--g3) 100%);
+        border-radius: var(--r-lg);
+        padding: 1.5rem 1.8rem 1.3rem;
+        margin-bottom: 1.2rem;
         position: relative;
         overflow: hidden;
+        box-shadow: 0 6px 24px rgba(0,77,38,0.28);
     }
     .del-header::before {
         content: '';
         position: absolute; inset: 0;
-        background: url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%23ffffff' fill-opacity='0.04'%3E%3Ccircle cx='30' cy='30' r='28'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E") repeat;
+        background: url("data:image/svg+xml,%3Csvg width='80' height='80' viewBox='0 0 80 80' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='%23ffffff' fill-opacity='0.03'%3E%3Ccircle cx='40' cy='40' r='36'/%3E%3Ccircle cx='0' cy='0' r='20'/%3E%3Ccircle cx='80' cy='80' r='20'/%3E%3C/g%3E%3C/svg%3E") repeat;
         pointer-events: none;
+    }
+    .del-header::after {
+        content: '';
+        position: absolute;
+        bottom: 0; left: 0; right: 0;
+        height: 3px;
+        background: linear-gradient(90deg, var(--gold) 0%, rgba(200,169,81,0) 100%);
     }
     .del-header h2 {
         color: #FFFFFF !important;
-        margin: 0 0 0.2rem 0;
-        font-size: 1.55rem;
-        font-weight: 700;
-        letter-spacing: -0.01em;
-        text-shadow: 0 1px 3px rgba(0,0,0,0.2);
+        margin: 0 0 0.15rem 0;
+        font-size: 1.5rem;
+        font-weight: 800;
+        letter-spacing: -0.02em;
+        text-shadow: 0 1px 4px rgba(0,0,0,0.25);
     }
     .del-header .sub {
-        color: rgba(255,255,255,0.80);
-        font-size: 0.84rem;
-        margin: 0 0 0.6rem 0;
+        color: rgba(255,255,255,0.78);
+        font-size: 0.82rem;
+        margin: 0 0 0.7rem 0;
         font-weight: 400;
+        letter-spacing: 0.01em;
     }
+    .del-header .badges { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
     .del-header .badge {
-        display: inline-block;
-        background: rgba(255,255,255,0.15);
-        border: 1px solid rgba(255,255,255,0.30);
+        display: inline-flex; align-items: center; gap: 5px;
+        background: rgba(255,255,255,0.13);
+        border: 1px solid rgba(255,255,255,0.28);
         border-radius: 20px;
-        padding: 3px 12px;
-        font-size: 0.74rem;
+        padding: 4px 12px;
+        font-size: 0.73rem;
         font-weight: 600;
         color: #FFFFFF;
-        letter-spacing: 0.03em;
-        backdrop-filter: blur(4px);
+        letter-spacing: 0.04em;
+        backdrop-filter: blur(6px);
+    }
+    .del-header .badge-gold {
+        background: rgba(200,169,81,0.25);
+        border-color: rgba(200,169,81,0.50);
     }
 
-    /* ── Tabs ── */
+    /* ══════════════════════════════════════════════
+       BOTÓN NUEVA (top-right)
+    ══════════════════════════════════════════════ */
+    button[data-testid="baseButton-secondary"] {
+        border-radius: var(--r-md) !important;
+        font-weight: 600 !important;
+        font-size: 0.82rem !important;
+        letter-spacing: 0.02em !important;
+        transition: all var(--t) !important;
+        border: 1.5px solid #C8D8DC !important;
+        color: var(--slate) !important;
+        background: var(--white) !important;
+        padding: 0.4rem 0.9rem !important;
+    }
+    button[data-testid="baseButton-secondary"]:hover {
+        border-color: var(--g2) !important;
+        color: var(--g2) !important;
+        box-shadow: var(--sh-sm) !important;
+        transform: translateY(-1px) !important;
+    }
+
+    /* ══════════════════════════════════════════════
+       BOTONES PRIMARIOS
+    ══════════════════════════════════════════════ */
+    button[data-testid="baseButton-primary"] {
+        border-radius: var(--r-md) !important;
+        font-weight: 700 !important;
+        font-size: 0.95rem !important;
+        letter-spacing: 0.01em !important;
+        padding: 0.65rem 1.4rem !important;
+        transition: all var(--t) !important;
+        box-shadow: 0 3px 10px rgba(0,0,0,0.18) !important;
+        border: none !important;
+        text-transform: none !important;
+    }
+    button[data-testid="baseButton-primary"]:not(:disabled):hover {
+        transform: translateY(-2px) !important;
+        box-shadow: 0 6px 18px rgba(0,0,0,0.22) !important;
+        filter: brightness(1.06) !important;
+    }
+    button[data-testid="baseButton-primary"]:not(:disabled):active {
+        transform: translateY(0) !important;
+        box-shadow: 0 2px 6px rgba(0,0,0,0.18) !important;
+    }
+    button[data-testid="baseButton-primary"]:disabled {
+        opacity: 0.42 !important;
+        cursor: not-allowed !important;
+        transform: none !important;
+        box-shadow: none !important;
+        filter: grayscale(30%) !important;
+    }
+
+    /* ══════════════════════════════════════════════
+       TABS
+    ══════════════════════════════════════════════ */
     .stTabs [data-baseweb="tab-list"] {
-        gap: 3px;
-        background: var(--ust-green-pale);
-        border-radius: 10px;
-        padding: 4px;
-        border: 1px solid var(--ust-border);
+        gap: 5px;
+        background: #EDF1F5;
+        border-radius: var(--r-md);
+        padding: 5px;
+        border: 1px solid #D4DCE6;
+        flex-wrap: wrap;
+        box-shadow: inset 0 1px 3px rgba(0,0,0,0.06);
     }
     .stTabs [data-baseweb="tab"] {
-        border-radius: 8px;
-        padding: 0.45rem 1.1rem;
-        font-weight: 500;
-        font-size: 0.84rem;
-        color: var(--ust-green-dark);
-        transition: all 0.18s ease;
+        border-radius: var(--r-sm) !important;
+        padding: 0.5rem 1rem !important;
+        font-weight: 500 !important;
+        font-size: 0.81rem !important;
+        transition: all var(--t) !important;
+        border: 1px solid transparent !important;
+        white-space: nowrap !important;
+        min-width: 0 !important;
     }
-    .stTabs [aria-selected="true"] {
-        background: var(--ust-green) !important;
-        color: #FFFFFF !important;
-        font-weight: 600;
-        box-shadow: 0 2px 8px rgba(0,102,51,0.25);
-    }
+    .stTabs [aria-selected="true"] { font-weight: 700 !important; }
 
-    /* ── Botones primarios (base) ── */
-    button[data-testid="baseButton-primary"] {
-        border-radius: 9px !important;
-        font-weight: 600 !important;
-        letter-spacing: 0.01em !important;
-        transition: all 0.18s ease !important;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.12) !important;
-    }
+    /* Tab colors */
+    .stTabs [data-baseweb="tab"]:nth-child(1)                          { color:#004d26; background:#DCF0E4; border-color:#B8DBC8; }
+    .stTabs [data-baseweb="tab"]:nth-child(1)[aria-selected="true"]    { background:var(--g2) !important; color:#fff !important; border-color:var(--g2) !important; box-shadow:0 2px 10px rgba(0,102,51,0.35) !important; }
+    .stTabs [data-baseweb="tab"]:nth-child(1):hover:not([aria-selected="true"]) { background:#C6E8D0; border-color:var(--g2); }
 
-    /* ── Métricas ── */
+    .stTabs [data-baseweb="tab"]:nth-child(2)                          { color:#1a3a6b; background:var(--blue-l); border-color:#C0D4EE; }
+    .stTabs [data-baseweb="tab"]:nth-child(2)[aria-selected="true"]    { background:var(--blue) !important; color:#fff !important; border-color:var(--blue) !important; box-shadow:0 2px 10px rgba(46,95,163,0.35) !important; }
+    .stTabs [data-baseweb="tab"]:nth-child(2):hover:not([aria-selected="true"]) { background:#D0E4F8; border-color:var(--blue); }
+
+    .stTabs [data-baseweb="tab"]:nth-child(3)                          { color:#4a2680; background:var(--purp-l); border-color:#D0C0EC; }
+    .stTabs [data-baseweb="tab"]:nth-child(3)[aria-selected="true"]    { background:var(--purp) !important; color:#fff !important; border-color:var(--purp) !important; box-shadow:0 2px 10px rgba(107,63,160,0.35) !important; }
+    .stTabs [data-baseweb="tab"]:nth-child(3):hover:not([aria-selected="true"]) { background:#E4D8F5; border-color:var(--purp); }
+
+    .stTabs [data-baseweb="tab"]:nth-child(4)                          { color:#005050; background:var(--teal-l); border-color:#A8D8D8; }
+    .stTabs [data-baseweb="tab"]:nth-child(4)[aria-selected="true"]    { background:var(--teal) !important; color:#fff !important; border-color:var(--teal) !important; box-shadow:0 2px 10px rgba(0,122,122,0.32) !important; }
+    .stTabs [data-baseweb="tab"]:nth-child(4):hover:not([aria-selected="true"]) { background:#C0E4E4; border-color:var(--teal); }
+
+    .stTabs [data-baseweb="tab"]:nth-child(5)                          { color:#5a3a00; background:var(--amber-l); border-color:#E8D090; }
+    .stTabs [data-baseweb="tab"]:nth-child(5)[aria-selected="true"]    { background:var(--amber) !important; color:#fff !important; border-color:var(--amber) !important; box-shadow:0 2px 10px rgba(200,160,48,0.32) !important; }
+    .stTabs [data-baseweb="tab"]:nth-child(5):hover:not([aria-selected="true"]) { background:#F0E0B0; border-color:var(--amber); }
+
+    .stTabs [data-baseweb="tab"]:nth-child(6)                          { color:#2a1860; background:var(--indg-l); border-color:#C0B4F0; }
+    .stTabs [data-baseweb="tab"]:nth-child(6)[aria-selected="true"]    { background:var(--indg) !important; color:#fff !important; border-color:var(--indg) !important; box-shadow:0 2px 10px rgba(76,58,160,0.35) !important; }
+    .stTabs [data-baseweb="tab"]:nth-child(6):hover:not([aria-selected="true"]) { background:#D8D0F8; border-color:var(--indg); }
+
+    /* ══════════════════════════════════════════════
+       MÉTRICAS
+    ══════════════════════════════════════════════ */
     div[data-testid="stMetric"] {
-        background: linear-gradient(135deg,#F7FCF9,#EEF7F1);
-        border: 1px solid var(--ust-border);
-        border-radius: 12px;
-        padding: 0.9rem 1.1rem;
-        box-shadow: 0 1px 4px rgba(0,102,51,0.06);
+        background: linear-gradient(135deg, #F3FAF6 0%, #EBF6EF 100%);
+        border: 1px solid var(--gb);
+        border-top: 3px solid var(--g2);
+        border-radius: var(--r-md);
+        padding: 1rem 1.1rem 0.9rem;
+        box-shadow: var(--sh-xs);
+        transition: box-shadow var(--t);
     }
+    div[data-testid="stMetric"]:hover { box-shadow: var(--sh-sm); }
     div[data-testid="stMetricLabel"] {
-        color: var(--ust-green-dark) !important;
-        font-weight: 600;
-        font-size: 0.76rem;
-        text-transform: uppercase;
-        letter-spacing: 0.05em;
+        color: var(--g1) !important; font-weight: 700 !important;
+        font-size: 0.72rem !important; text-transform: uppercase !important;
+        letter-spacing: 0.06em !important;
     }
     div[data-testid="stMetricValue"] {
-        color: var(--ust-green) !important;
-        font-weight: 700;
-        font-size: 1.8rem !important;
+        color: var(--g2) !important; font-weight: 800 !important;
+        font-size: 1.9rem !important; line-height: 1.2 !important;
     }
-    div[data-testid="stMetricDelta"] {
-        font-size: 0.78rem !important;
-    }
+    div[data-testid="stMetricDelta"] { font-size: 0.76rem !important; font-weight: 500 !important; }
 
-    /* ── Expanders ── */
+    /* ══════════════════════════════════════════════
+       EXPANDERS
+    ══════════════════════════════════════════════ */
     div[data-testid="stExpander"] {
-        border: 1px solid var(--ust-border) !important;
-        border-radius: 10px !important;
-        overflow: hidden;
+        border: 1px solid var(--gb) !important;
+        border-radius: var(--r-md) !important;
+        box-shadow: var(--sh-xs) !important;
+        transition: box-shadow var(--t) !important;
+        overflow: visible !important;
     }
+    div[data-testid="stExpander"]:hover { box-shadow: var(--sh-sm) !important; }
     div[data-testid="stExpander"] summary {
-        background: var(--ust-green-mist);
-        color: var(--ust-green-dark);
-        font-weight: 500;
-        padding: 0.6rem 1rem;
+        background: linear-gradient(90deg, var(--gm), #F8FCF9) !important;
+        color: var(--g1) !important;
+        font-weight: 600 !important;
+        font-size: 0.88rem !important;
+        padding: 0.7rem 1rem !important;
+        border-radius: var(--r-md) !important;
+        transition: background var(--t) !important;
+        cursor: pointer !important;
     }
-    div[data-testid="stExpander"] summary:hover {
-        background: var(--ust-green-pale);
-    }
+    div[data-testid="stExpander"] summary:hover { background: var(--gp) !important; }
+    div[data-testid="stExpander"] summary p { font-weight: 600 !important; }
 
-    /* ── Dividers ── */
-    hr { border-color: var(--ust-border) !important; opacity: 0.7; }
-
-    /* ── Alertas ── */
+    /* ══════════════════════════════════════════════
+       ALERTAS
+    ══════════════════════════════════════════════ */
     div[data-testid="stAlert"] {
-        border-radius: 10px !important;
+        border-radius: var(--r-md) !important;
         border-left-width: 4px !important;
+        font-size: 0.87rem !important;
+        box-shadow: var(--sh-xs) !important;
     }
 
-    /* ── File uploader ── */
+    /* ══════════════════════════════════════════════
+       FILE UPLOADER
+    ══════════════════════════════════════════════ */
     div[data-testid="stFileUploader"] {
-        border: 2px dashed var(--ust-green-mid);
-        border-radius: 12px;
-        padding: 0.6rem;
-        background: #F7FCF9;
-        transition: border-color 0.2s;
+        border: 2px dashed var(--g3) !important;
+        border-radius: var(--r-md) !important;
+        padding: 0.8rem !important;
+        background: linear-gradient(135deg, #F5FBF7, #F0F8F4) !important;
+        transition: all var(--t) !important;
     }
     div[data-testid="stFileUploader"]:hover {
-        border-color: var(--ust-green);
-        background: var(--ust-green-pale);
+        border-color: var(--g2) !important;
+        background: var(--gp) !important;
+        box-shadow: var(--sh-sm) !important;
+    }
+    div[data-testid="stFileUploader"] label {
+        font-weight: 600 !important;
+        color: var(--g1) !important;
     }
 
-    /* ── Progress bar ── */
+    /* ══════════════════════════════════════════════
+       PROGRESS BAR
+    ══════════════════════════════════════════════ */
     div[data-testid="stProgressBar"] > div > div {
-        background: linear-gradient(90deg, var(--ust-green), var(--ust-green-mid)) !important;
+        background: linear-gradient(90deg, var(--g2), var(--g3)) !important;
         border-radius: 99px !important;
     }
 
-    /* ── Dataframe ── */
-    div[data-testid="stDataFrame"] { border-radius: 10px; overflow: hidden; }
-
-    /* ── Tags ── */
-    .tag-ok    { background:#C8E6D4; color:#004d26; border-radius:5px;
-                 padding:2px 10px; font-size:0.81rem; font-weight:600; }
-    .tag-error { background:#FDDCDC; color:#8B0000; border-radius:5px;
-                 padding:2px 10px; font-size:0.81rem; font-weight:600; }
-    .tag-warn  { background:#FFF3CD; color:#7A5700; border-radius:5px;
-                 padding:2px 10px; font-size:0.81rem; font-weight:600; }
-
-    /* ── Captions y checkboxes ── */
-    .stCaption { color: #4a7c5e; font-size: 0.82rem; }
-    .stCheckbox label { color: var(--ust-green-dark); font-weight: 500; }
-
-    /* ── Selectbox / inputs ── */
-    div[data-baseweb="select"] > div,
+    /* ══════════════════════════════════════════════
+       INPUTS / SELECTBOX
+    ══════════════════════════════════════════════ */
+    div[data-baseweb="select"] > div {
+        border-radius: var(--r-sm) !important;
+        border-color: var(--gb) !important;
+        font-size: 0.88rem !important;
+        transition: border-color var(--t) !important;
+    }
+    div[data-baseweb="select"] > div:focus-within {
+        border-color: var(--g2) !important;
+        box-shadow: 0 0 0 3px rgba(0,102,51,0.12) !important;
+    }
     div[data-baseweb="input"] > div {
-        border-radius: 8px !important;
-        border-color: var(--ust-border) !important;
+        border-radius: var(--r-sm) !important;
+        border-color: var(--gb) !important;
+        font-size: 0.88rem !important;
+    }
+    div[data-baseweb="textarea"] {
+        border-radius: var(--r-sm) !important;
+        border-color: var(--gb) !important;
+        font-size: 0.87rem !important;
     }
 
-    /* colores de botones por instancia: aplicados via JS (components.html) */
+    /* ══════════════════════════════════════════════
+       CHECKBOXES
+    ══════════════════════════════════════════════ */
+    .stCheckbox label {
+        color: var(--g1) !important;
+        font-weight: 500 !important;
+        font-size: 0.88rem !important;
+    }
+    .stCheckbox label:hover { color: var(--g2) !important; }
+
+    /* ══════════════════════════════════════════════
+       DATAFRAME
+    ══════════════════════════════════════════════ */
+    div[data-testid="stDataFrame"] {
+        border-radius: var(--r-md) !important;
+        overflow: hidden !important;
+        box-shadow: var(--sh-xs) !important;
+        border: 1px solid var(--gb) !important;
+    }
+
+    /* ══════════════════════════════════════════════
+       DIVIDERS
+    ══════════════════════════════════════════════ */
+    hr {
+        border: none !important;
+        border-top: 1px solid var(--gb) !important;
+        margin: 1.4rem 0 !important;
+        opacity: 0.8 !important;
+    }
+
+    /* ══════════════════════════════════════════════
+       CAPTIONS / TEXTO
+    ══════════════════════════════════════════════ */
+    .stCaption, [data-testid="stCaptionContainer"] {
+        color: var(--text-m) !important;
+        font-size: 0.81rem !important;
+    }
+
+    /* ══════════════════════════════════════════════
+       SECTION CARD — contenedor de sección
+    ══════════════════════════════════════════════ */
+    .sec-card {
+        background: var(--white);
+        border: 1px solid var(--gb);
+        border-radius: var(--r-md);
+        padding: 1.1rem 1.3rem;
+        margin-bottom: 1rem;
+        box-shadow: var(--sh-xs);
+    }
+    .sec-title {
+        font-size: 0.72rem; font-weight: 700; text-transform: uppercase;
+        letter-spacing: 0.08em; color: var(--text-m);
+        margin: 0 0 0.7rem 0; display: flex; align-items: center; gap: 6px;
+    }
+    .sec-title::after {
+        content: ''; flex: 1; height: 1px; background: var(--gb);
+    }
+
+    /* ══════════════════════════════════════════════
+       TAGS
+    ══════════════════════════════════════════════ */
+    .tag-ok {
+        display: inline-flex; align-items: center; gap: 4px;
+        background: #D4EDDA; color: #155724;
+        border-radius: 6px; padding: 3px 10px;
+        font-size: 0.79rem; font-weight: 600;
+        border: 1px solid #B8DFBF;
+    }
+    .tag-error {
+        display: inline-flex; align-items: center; gap: 4px;
+        background: #FDDCDC; color: #7A0000;
+        border-radius: 6px; padding: 3px 10px;
+        font-size: 0.79rem; font-weight: 600;
+        border: 1px solid #F5B8B8;
+    }
+    .tag-warn {
+        display: inline-flex; align-items: center; gap: 4px;
+        background: #FFF3CD; color: #6B4A00;
+        border-radius: 6px; padding: 3px 10px;
+        font-size: 0.79rem; font-weight: 600;
+        border: 1px solid #ECCC7A;
+    }
+
+    /* ══════════════════════════════════════════════
+       VISION / ANÁLISIS VISUAL
+    ══════════════════════════════════════════════ */
+    .vision-card {
+        background: linear-gradient(135deg, #EDE9FB 0%, #F3F0FD 100%);
+        border: 1px solid #C0B4F0;
+        border-top: 3px solid var(--indg);
+        border-radius: var(--r-lg);
+        padding: 1.3rem 1.5rem;
+        margin-bottom: 1.2rem;
+        box-shadow: var(--sh-sm);
+    }
+    .vision-card h4 {
+        color: var(--indg); margin: 0 0 0.4rem 0;
+        font-size: 1.05rem; font-weight: 700;
+    }
+    .vision-result {
+        background: #FAFBFC;
+        border: 1px solid #E4E8EE;
+        border-radius: var(--r-md);
+        padding: 1.1rem 1.3rem;
+        font-size: 0.875rem;
+        line-height: 1.7;
+        color: var(--text);
+        white-space: pre-wrap;
+        box-shadow: inset 0 1px 4px rgba(0,0,0,0.04);
+        max-height: 520px;
+        overflow-y: auto;
+    }
+    .model-badge {
+        display: inline-flex; align-items: center; gap: 6px;
+        background: linear-gradient(90deg, var(--indg), #6B52C8);
+        color: #fff; border-radius: 20px; padding: 5px 14px;
+        font-size: 0.75rem; font-weight: 700; letter-spacing: 0.04em;
+        box-shadow: 0 2px 8px rgba(76,58,160,0.28);
+    }
+
+    /* ══════════════════════════════════════════════
+       SPINNER — override color
+    ══════════════════════════════════════════════ */
+    div[data-testid="stSpinner"] > div {
+        border-top-color: var(--g2) !important;
+    }
+
+    /* ══════════════════════════════════════════════
+       MARKDOWN headings dentro de tabs
+    ══════════════════════════════════════════════ */
+    .stMarkdown h3 {
+        color: var(--g1);
+        font-size: 1.05rem;
+        font-weight: 700;
+        margin: 1.2rem 0 0.5rem;
+        padding-bottom: 0.3rem;
+        border-bottom: 2px solid var(--gb);
+    }
+    .stMarkdown h4 {
+        color: var(--text);
+        font-size: 0.93rem;
+        font-weight: 600;
+        margin: 0.8rem 0 0.3rem;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -402,38 +677,78 @@ components.html("""
 """, height=0)
 
 st.markdown("""
-<div class="del-header" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:1rem;">
-  <div>
-    <h2 style="margin:0;">📋 Procesador de Planificaciones DEL</h2>
-    <p class="sub" style="margin:0;">Universidad Santo Tomás · Dirección de Educación a Distancia</p>
-    <span class="badge">Semestre 2026-1</span>
-  </div>
-  <div style="text-align:center;min-width:160px;">
-    <div id="reloj-hora" style="font-size:2.2rem;font-weight:800;color:#ffffff;
-         letter-spacing:0.04em;line-height:1;text-shadow:0 2px 8px rgba(0,0,0,0.25);">
-      --:--:--
+<div class="del-header">
+  <div style="display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:1rem;">
+    <div>
+      <h2 style="margin:0;">Procesador de Planificaciones DEL</h2>
+      <p class="sub">Universidad Santo Tomás &nbsp;·&nbsp; Dirección de Educación a Distancia</p>
+      <div class="badges">
+        <span class="badge badge-gold">✦ Semestre 2026-1</span>
+        <span class="badge">🤖 IA local</span>
+        <span class="badge">📋 UST</span>
+      </div>
     </div>
-    <div id="reloj-fecha" style="font-size:0.82rem;font-weight:500;color:#d4f0e4;
-         margin-top:4px;line-height:1.3;">
-      cargando...
+    <div style="text-align:right;min-width:140px;">
+      <div id="reloj-hora" style="font-size:2rem;font-weight:800;color:#fff;
+           letter-spacing:0.05em;line-height:1;text-shadow:0 2px 10px rgba(0,0,0,0.30);
+           font-variant-numeric:tabular-nums;">
+        --:--:--
+      </div>
+      <div id="reloj-fecha" style="font-size:0.78rem;font-weight:500;color:rgba(212,240,228,0.90);
+           margin-top:5px;line-height:1.4;">
+        cargando...
+      </div>
     </div>
   </div>
 </div>
 """, unsafe_allow_html=True)
 
-# ── Colores de botones vía JS (CSS no puede atravesar el DOM de Streamlit) ──
+# ── Colores y estilos de botones vía JS ──────────────────────────────────────
 components.html("""
 <script>
 (function () {
+    /* bg normal · bg hover · shadow color */
     var COLOR_MAP = [
-        { label: 'Revisar planificación',             bg: '#4A9068', hov: '#357a52' },
-        { label: 'Aplicar correcciones (Instancia 2)',bg: '#4A7FA5', hov: '#356488' },
-        { label: 'Aplicar correcciones (Instancia 3)',bg: '#8B6EAF', hov: '#70578f' },
-        { label: 'Exportar historial',                bg: '#C07A3A', hov: '#a0622c' },
-        { label: 'Agregar al diccionario',            bg: '#5A7A8A', hov: '#456070' },
-        { label: 'Nueva',                             bg: '#6c757d', hov: '#545b62' },
+        { label: 'Revisar planificación',             bg:'#006633', hov:'#004d26', sh:'rgba(0,102,51,0.38)' },
+        { label: 'Aplicar correcciones (Instancia 2)',bg:'#2E5FA3', hov:'#1d4480', sh:'rgba(46,95,163,0.38)' },
+        { label: 'Aplicar correcciones (Instancia 3)',bg:'#6B3FA0', hov:'#522f80', sh:'rgba(107,63,160,0.38)' },
+
+        { label: 'Agregar al diccionario',            bg:'#4A6080', hov:'#354860', sh:'rgba(74,96,128,0.38)' },
+        { label: 'Analizar documento',                bg:'#4C3AA0', hov:'#3a2b80', sh:'rgba(76,58,160,0.38)' },
+        { label: 'Nueva',                             bg:'#52606D', hov:'#3a4450', sh:'rgba(82,96,109,0.32)' },
     ];
     var done = new WeakSet();
+
+    function styleBtn(btn, c) {
+        Object.assign(btn.style, {
+            backgroundColor: c.bg,
+            borderColor:     c.bg,
+            color:           '#ffffff',
+            borderRadius:    '10px',
+            fontWeight:      '700',
+            fontSize:        '0.92rem',
+            letterSpacing:   '0.01em',
+            padding:         '0.6rem 1.3rem',
+            boxShadow:       '0 3px 10px ' + c.sh,
+            transition:      'all 0.18s ease',
+            outline:         'none',
+        });
+        btn.addEventListener('mouseenter', function () {
+            if (btn.disabled) return;
+            btn.style.backgroundColor = c.hov;
+            btn.style.borderColor     = c.hov;
+            btn.style.boxShadow       = '0 5px 16px ' + c.sh;
+            btn.style.transform       = 'translateY(-2px)';
+        });
+        btn.addEventListener('mouseleave', function () {
+            btn.style.backgroundColor = c.bg;
+            btn.style.borderColor     = c.bg;
+            btn.style.boxShadow       = '0 3px 10px ' + c.sh;
+            btn.style.transform       = 'translateY(0)';
+        });
+        btn.addEventListener('mousedown',  function () { btn.style.transform = 'translateY(0)'; });
+        done.add(btn);
+    }
 
     function paint() {
         try {
@@ -442,21 +757,10 @@ components.html("""
                 if (done.has(btn)) return;
                 var txt = (btn.innerText || btn.textContent || '').trim();
                 COLOR_MAP.forEach(function (c) {
-                    if (txt.indexOf(c.label) !== -1) {
-                        btn.style.setProperty('background-color', c.bg, 'important');
-                        btn.style.setProperty('border-color',     c.bg, 'important');
-                        btn.style.setProperty('color',            '#ffffff', 'important');
-                        btn.addEventListener('mouseenter', function () {
-                            btn.style.setProperty('background-color', c.hov, 'important');
-                        });
-                        btn.addEventListener('mouseleave', function () {
-                            btn.style.setProperty('background-color', c.bg, 'important');
-                        });
-                        done.add(btn);
-                    }
+                    if (txt.indexOf(c.label) !== -1) styleBtn(btn, c);
                 });
             });
-        } catch (e) { /* cross-origin bloqueado — silencioso */ }
+        } catch(e) { /* cross-origin — silencioso */ }
     }
 
     paint();
@@ -480,16 +784,87 @@ with _col_btn:
         st.rerun()
 
 # ═════════════════════════════════════════════════════════════════════════
-#  SELECTOR DE INSTANCIA
+#  NAVEGACIÓN PRINCIPAL
 # ═════════════════════════════════════════════════════════════════════════
 
-tab_i1, tab_i2, tab_i3, tab_hist, tab_dict = st.tabs([
-    "Instancia 1 — Revisión previa al envío",
-    "Instancia 2 — 1ª revisora DEL",
-    "Instancia 3 — 2ª revisora / aprobación final",
-    "📊 Historial",
-    "📖 Diccionario UST",
+# Indicador visual del flujo de trabajo
+st.markdown("""
+<div style="display:flex;align-items:stretch;gap:0;margin:0.4rem 0 1.4rem;
+            background:linear-gradient(135deg,#F2F8F4,#EBF5EE);
+            border-radius:14px;padding:0;border:1px solid #C8E6D4;
+            overflow:hidden;box-shadow:0 2px 8px rgba(0,102,51,0.08);">
+
+  <div style="flex:1;text-align:center;padding:0.85rem 0.4rem;
+              border-right:1px solid #C8E6D4;position:relative;">
+    <div style="font-size:1.5rem;line-height:1;margin-bottom:4px">📋</div>
+    <div style="font-size:0.68rem;font-weight:800;color:#006633;letter-spacing:0.06em;text-transform:uppercase">Revisar</div>
+    <div style="font-size:0.60rem;color:#5a8a6a;margin-top:2px">Sube archivos</div>
+    <div style="position:absolute;top:50%;right:-8px;transform:translateY(-50%);
+                width:15px;height:15px;background:#C8E6D4;border-radius:50%;
+                display:flex;align-items:center;justify-content:center;
+                font-size:0.55rem;color:#006633;font-weight:700;z-index:1;
+                border:2px solid #EBF5EE">▶</div>
+  </div>
+
+  <div style="flex:1;text-align:center;padding:0.85rem 0.4rem;
+              border-right:1px solid #C8E6D4;position:relative;">
+    <div style="font-size:1.5rem;line-height:1;margin-bottom:4px">📝</div>
+    <div style="font-size:0.68rem;font-weight:800;color:#2E5FA3;letter-spacing:0.06em;text-transform:uppercase">Corregir</div>
+    <div style="font-size:0.60rem;color:#5a7aaa;margin-top:2px">Revisoras DEL</div>
+    <div style="position:absolute;top:50%;right:-8px;transform:translateY(-50%);
+                width:15px;height:15px;background:#C5D8F0;border-radius:50%;
+                display:flex;align-items:center;justify-content:center;
+                font-size:0.55rem;color:#2E5FA3;font-weight:700;z-index:1;
+                border:2px solid #EBF5EE">▶</div>
+  </div>
+
+  <div style="flex:1;text-align:center;padding:0.85rem 0.4rem;
+              border-right:1px solid #C8E6D4;position:relative;">
+    <div style="font-size:1.5rem;line-height:1;margin-bottom:4px">🎨</div>
+    <div style="font-size:0.68rem;font-weight:800;color:#6B3FA0;letter-spacing:0.06em;text-transform:uppercase">Diseñar</div>
+    <div style="font-size:0.60rem;color:#8a6ab0;margin-top:2px">Recursos T1–T4</div>
+    <div style="position:absolute;top:50%;right:-8px;transform:translateY(-50%);
+                width:15px;height:15px;background:#D8C8F0;border-radius:50%;
+                display:flex;align-items:center;justify-content:center;
+                font-size:0.55rem;color:#6B3FA0;font-weight:700;z-index:1;
+                border:2px solid #EBF5EE">▶</div>
+  </div>
+
+  <div style="flex:1;text-align:center;padding:0.85rem 0.4rem;
+              border-right:1px solid #C8E6D4;position:relative;">
+    <div style="font-size:1.5rem;line-height:1;margin-bottom:4px">🔍</div>
+    <div style="font-size:0.68rem;font-weight:800;color:#4C3AA0;letter-spacing:0.06em;text-transform:uppercase">Visual</div>
+    <div style="font-size:0.60rem;color:#7060b0;margin-top:2px">Qwen2.5-VL</div>
+    <div style="position:absolute;top:50%;right:-8px;transform:translateY(-50%);
+                width:15px;height:15px;background:#C9BEF5;border-radius:50%;
+                display:flex;align-items:center;justify-content:center;
+                font-size:0.55rem;color:#4C3AA0;font-weight:700;z-index:1;
+                border:2px solid #EBF5EE">▶</div>
+  </div>
+
+  <div style="flex:1;text-align:center;padding:0.85rem 0.4rem;
+              background:linear-gradient(135deg,rgba(0,102,51,0.05),rgba(0,148,80,0.08));">
+    <div style="font-size:1.5rem;line-height:1;margin-bottom:4px">✅</div>
+    <div style="font-size:0.68rem;font-weight:800;color:#006633;letter-spacing:0.06em;text-transform:uppercase">Aprobar</div>
+    <div style="font-size:0.60rem;color:#5a8a6a;margin-top:2px">Planificación válida</div>
+  </div>
+
+</div>
+""", unsafe_allow_html=True)
+
+tab_i1, tab_del, tab_recursos, tab_escala, tab_config, tab_vision = st.tabs([
+    "📋 Revisar",
+    "📝 Revisoras DEL",
+    "🎨 Diseño de Recursos",
+    "📊 Escala de Apreciación",
+    "⚙️ Herramientas",
+    "🔍 Análisis Visual",
 ])
+
+# Alias para compatibilidad con código existente
+tab_i2 = tab_del
+tab_i3 = tab_del
+tab_dict = tab_config
 
 # ═════════════════════════════════════════════════════════════════════════
 #  INSTANCIA 1
@@ -634,7 +1009,7 @@ with tab_i1:
         st.caption(
             "Usa un modelo de lenguaje para revisar y corregir referencias APA 7 "
             "con mayor profundidad que las reglas automáticas. "
-            "Ollama es gratuito y corre localmente."
+            "Ollama es gratuito y corre localmente — usa la API nativa para mejor compatibilidad con qwen3."
         )
 
         col_llm1, col_llm2 = st.columns([2, 2])
@@ -651,13 +1026,13 @@ with tab_i1:
                 help="Ollama = local y gratis. Los demás requieren API key.",
             )
         with col_llm2:
-            # Modelo por defecto según backend
+            # Modelo por defecto según backend — clave incluye backend para evitar caché cruzada
             modelo_default = apa_llm.BACKEND_DEFAULTS[backend_i1]["model"]
             modelo_i1 = st.text_input(
                 "Modelo",
                 value=modelo_default,
-                key="i1_llm_model",
-                help="Para Ollama: nombre del modelo instalado (ej: gemma3:12b). "
+                key=f"i1_llm_model_{backend_i1}",
+                help=f"Para Ollama texto: {apa_llm.MODELO_TEXTO} · imágenes: {apa_llm.MODELO_VISION}. "
                      "Para otros backends: nombre del modelo de la API.",
             )
             apikey_i1 = st.text_input(
@@ -677,11 +1052,76 @@ with tab_i1:
         )
         if backend_i1 == "ollama":
             st.info(
-                f"Modelo por defecto: **{modelo_default}**. "
-                "Si no lo tienes instalado, ejecuta en terminal: "
+                f"Modelo por defecto: **{modelo_default}** (API nativa `/api/chat`, compatible con qwen3). "
+                "Si no lo tienes instalado: "
                 f"`ollama pull {modelo_default}`",
                 icon="💡",
             )
+
+    # ── Escala de Apreciación con IA ──────────────────────────────────────────
+    if ESCALA_OK:
+        with st.expander("🎯 Escala de Apreciación UST (45 criterios con IA)", expanded=False):
+            st.caption(
+                "Evalúa los 45 criterios institucionales con IA. "
+                "Usa **Ollama local** (gratis) o **Claude API** (mejor calidad)."
+            )
+
+            col_e0, col_e1 = st.columns([1, 1])
+            with col_e0:
+                usar_escala_i1 = st.checkbox(
+                    "Activar evaluación",
+                    value=False,
+                    key="i1_escala_activo",
+                )
+                reescribir_i1 = st.checkbox(
+                    "Reescribir actividades (C19-C21)",
+                    value=True,
+                    key="i1_reescribir",
+                    help="Corrige imperativo, propósito y retroalimentación.",
+                )
+            with col_e1:
+                _backend_opts = ["ollama (local, gratis)", "claude (API)"]
+                _backend_sel  = st.selectbox(
+                    "Motor IA",
+                    _backend_opts,
+                    key="i1_escala_backend",
+                    help="Ollama corre localmente sin costo. Claude requiere API key.",
+                )
+                backend_escala_i1 = "ollama" if "ollama" in _backend_sel else "claude"
+
+            if backend_escala_i1 == "ollama":
+                _modelo_ollama_default = apa_llm.MODELO_TEXTO
+                modelo_escala_i1 = st.text_input(
+                    "Modelo Ollama",
+                    value=_modelo_ollama_default,
+                    key="i1_modelo_ollama_ollama",
+                    help=f"Recomendado: {apa_llm.MODELO_TEXTO} — usa API nativa /api/chat (compatible con qwen3). "
+                         "No correr junto al modelo de visión (16 GB RAM). "
+                         "Ejecuta `ollama list` para ver los disponibles.",
+                )
+                apikey_escala_i1 = ""
+                if usar_escala_i1:
+                    st.success(
+                        f"Usando **{modelo_escala_i1}** local (API nativa) — sin costo de API.",
+                        icon="🦙",
+                    )
+            else:
+                modelo_escala_i1 = ""
+                apikey_escala_i1 = st.text_input(
+                    "API Key de Anthropic",
+                    value=os.environ.get("ANTHROPIC_API_KEY", ""),
+                    type="password",
+                    key="i1_escala_key",
+                    placeholder="sk-ant-api03-...",
+                )
+                if usar_escala_i1 and not apikey_escala_i1:
+                    st.warning("Ingresa la API Key para usar Claude.", icon="🔑")
+    else:
+        usar_escala_i1   = False
+        reescribir_i1    = False
+        apikey_escala_i1 = ""
+        backend_escala_i1 = "ollama"
+        modelo_escala_i1  = apa_llm.MODELO_TEXTO
 
     st.markdown("### 3 · Revisar")
 
@@ -699,10 +1139,12 @@ with tab_i1:
         st.caption("⬆ Sube el PDF del programa y la planificación .xlsx para continuar.")
 
     if procesar_i1 and listo_i1:
-        output_bytes = None
-        output_name  = None
-        log          = []
-        ok           = False
+        output_bytes     = None
+        output_name      = None
+        log              = []
+        ok               = False
+        escala_resultado = None
+        reesc_log        = []
 
         rp._LANGUAGETOOL_ACTIVO = usar_lt_i1
         rp._LANGUAGETOOL_AUTOCORREGIR = autocorregir_lt_i1
@@ -772,6 +1214,50 @@ with tab_i1:
                             output_bytes = f.read()
                         output_name = _nombre_descarga(programa, 1, output_bytes)
 
+                # ── Escala de Apreciación (45 criterios) ──────────────────
+                _escala_activa = (
+                    ESCALA_OK and usar_escala_i1 and output_bytes and
+                    (backend_escala_i1 == "ollama" or apikey_escala_i1)
+                )
+                if _escala_activa:
+                    _spinner_llm = (f"Ollama/{modelo_escala_i1}" if backend_escala_i1 == "ollama"
+                                    else "Claude Sonnet")
+                    with st.spinner(f"{_spinner_llm} evaluando Escala de Apreciación (45 criterios)…"):
+                        def _escala_prog(p, t, msg): pass
+                        try:
+                            escala_resultado = evaluar_45_criterios(
+                                output_bytes,
+                                api_key=apikey_escala_i1,
+                                progress_callback=_escala_prog,
+                                backend=backend_escala_i1,
+                                modelo_local=modelo_escala_i1 or apa_llm.MODELO_TEXTO,
+                            )
+                            st.session_state["escala_resultado"] = escala_resultado
+                            st.session_state["escala_archivo"]   = output_name
+                        except Exception as _e_escala:
+                            escala_resultado = None
+                            log.append(f"⚠️  Escala: error — {str(_e_escala)[:100]}")
+
+                    # ── Reescritura semántica si corresponde ───────────────
+                    if reescribir_i1 and escala_resultado and output_bytes:
+                        _rw_necesario = any(
+                            escala_resultado.get("criterios", {}).get(cid, {}).get("estado", "NO")
+                            in ("NO", "PARCIALMENTE")
+                            for cid in (19, 20, 21)
+                        )
+                        if _rw_necesario:
+                            with st.spinner(f"{_spinner_llm} reescribiendo actividades (C19-C21)…"):
+                                try:
+                                    output_bytes, reesc_log = reescribir_planificacion(
+                                        output_bytes,
+                                        escala_resultado,
+                                        api_key=apikey_escala_i1,
+                                        backend=backend_escala_i1,
+                                        modelo_local=modelo_escala_i1 or apa_llm.MODELO_TEXTO,
+                                    )
+                                except Exception as _e_rw:
+                                    reesc_log = [f"❌ Error reescritura: {str(_e_rw)[:100]}"]
+
         st.divider()
         st.markdown("### Resultados")
 
@@ -779,16 +1265,6 @@ with tab_i1:
             st.error("El procesamiento falló. Revisa el log.")
         else:
             metricas = parsear_log(log)
-            hist.registrar(instancia=1, archivo_nombre=output_name,
-                           metricas=metricas, programa=programa or None)
-            veces = hist.contar_por_codigo((programa or {}).get("codigo", ""))
-            if veces >= 3:
-                st.warning(
-                    f"⚠️ Esta asignatura ya fue procesada **{veces} veces**. "
-                    "Verifica si corresponde a una nueva versión.",
-                    icon="🔁",
-                )
-
             col1, col2, col3 = st.columns(3)
             with col1:
                 st.metric(
@@ -939,6 +1415,105 @@ with tab_i1:
                     for linea in metricas["as_detalle"]:
                         st.markdown(linea)
 
+            # ── Escala de Apreciación: resumen visual ─────────────────────
+            _escala_res = st.session_state.get("escala_resultado")
+            if _escala_res:
+                st.divider()
+                st.markdown("### 📊 Escala de Apreciación UST — 45 Criterios")
+                _r = _escala_res.get("resumen", {})
+                _n_si   = _r.get("SI", 0)
+                _n_parc = _r.get("PARCIALMENTE", 0)
+                _n_no   = _r.get("NO", 0)
+                _n_na   = _r.get("N/A", 0)
+                _pct    = _r.get("pct_cumplimiento", 0)
+                _total  = _r.get("total", 45)
+
+                # Métricas resumen
+                _ce1, _ce2, _ce3, _ce4 = st.columns(4)
+                _ce1.metric("✅ Cumple", _n_si,
+                            delta=f"{round(_n_si/_total*100)}%" if _total else "—")
+                _ce2.metric("⚠️ Parcial", _n_parc)
+                _ce3.metric("❌ No cumple", _n_no,
+                            delta="revisar" if _n_no else "sin errores",
+                            delta_color="inverse" if _n_no else "normal")
+                _ce4.metric("Cumplimiento", f"{_pct}%")
+
+                st.progress(
+                    (_n_si + _n_parc * 0.5) / max(_total, 1),
+                    text=f"Cumplimiento ponderado: {_pct}%  "
+                         f"({_n_si} SI · {_n_parc} Parcial · {_n_no} No)"
+                )
+
+                # Tabla por sección
+                _por_sec = _escala_res.get("por_seccion", {})
+                if _por_sec:
+                    with st.expander("📋 Resumen por sección", expanded=True):
+                        _SEC_COLS = st.columns(len(_por_sec))
+                        for _idx, (_sec, _cnt) in enumerate(_por_sec.items()):
+                            _s_si   = _cnt.get("SI", 0)
+                            _s_no   = _cnt.get("NO", 0)
+                            _s_parc = _cnt.get("PARCIALMENTE", 0)
+                            _s_tot  = _s_si + _s_no + _s_parc
+                            _bg = (
+                                "#C8E6D4" if _s_no == 0 else
+                                "#FFF3CD" if _s_no <= _s_tot // 2 else
+                                "#FDDCDC"
+                            )
+                            _SEC_COLS[_idx].markdown(
+                                f"<div style='background:{_bg};border-radius:8px;"
+                                f"padding:0.5rem 0.7rem;text-align:center;'>"
+                                f"<b style='font-size:0.75rem;color:#333'>{_sec}</b><br>"
+                                f"<span style='font-size:1.1rem;font-weight:700'>"
+                                f"✅{_s_si} ⚠️{_s_parc} ❌{_s_no}</span></div>",
+                                unsafe_allow_html=True,
+                            )
+
+                # Detalle 45 criterios colapsado
+                _crits_data = _escala_res.get("criterios", {})
+                if CRITERIOS and _crits_data:
+                    _sec_act = ""
+                    _lineas_crit = []
+                    _ICONOS = {"SI": "✅", "PARCIALMENTE": "⚠️", "NO": "❌",
+                               "N/A": "⬜", "ERROR": "🔴"}
+                    for _c in CRITERIOS:
+                        if _c["seccion"] != _sec_act:
+                            _sec_act = _c["seccion"]
+                            _lineas_crit.append(f"\n**── {_sec_act} ──**")
+                        _res_c = _crits_data.get(_c["id"], {})
+                        _ico   = _ICONOS.get(_res_c.get("estado", "NO"), "❓")
+                        _obs   = _res_c.get("observacion", "")
+                        _lineas_crit.append(
+                            f"{_ico} **C{_c['id']:02d}** {_c['texto'][:75]}"
+                            + (f"  \n&nbsp;&nbsp;&nbsp;&nbsp;↳ *{_obs[:110]}*" if _obs else "")
+                        )
+                    n_err_crit = _n_no + _n_parc
+                    with st.expander(
+                        f"🔍 Ver 45 criterios individuales ({n_err_crit} con observación)",
+                        expanded=_n_no > 3,
+                    ):
+                        for _l in _lineas_crit:
+                            st.markdown(_l)
+
+                # Reescritura log
+                if reesc_log:
+                    with st.expander(
+                        f"✍️ Reescritura pedagógica — {sum(1 for l in reesc_log if '✏️' in l)} actividad(es) corregida(s)",
+                        expanded=False,
+                    ):
+                        for _rl in reesc_log:
+                            st.markdown(_rl)
+
+                # Descargar reporte texto
+                _reporte_txt = reporte_escala(_escala_res) if ESCALA_OK else ""
+                if _reporte_txt:
+                    st.download_button(
+                        "⬇ Descargar reporte Escala (.txt)",
+                        data=_reporte_txt,
+                        file_name=output_name.replace(".xlsx", "_Escala.txt"),
+                        mime="text/plain",
+                        use_container_width=True,
+                    )
+
             st.divider()
             st.download_button(
                 label=f"⬇ Descargar {output_name}",
@@ -951,6 +1526,7 @@ with tab_i1:
             st.caption(
                 "El archivo incluye todas las correcciones marcadas en azul. "
                 "Las filas Formativa tienen fondo lila y las Sumativa fondo amarillo."
+                + (" Actividades reescritas pedagógicamente marcadas en azul." if reesc_log else "")
             )
 
             with st.expander("🔍 Ver log completo de correcciones"):
@@ -1114,15 +1690,6 @@ def _render_instancia_escala(tab, instancia_num, key_prefix):
                     st.code("\n".join(log_x), language=None)
             else:
                 metricas_x = parsear_log(log_x)
-                hist.registrar(instancia=instancia_num, archivo_nombre=out_name_x,
-                               metricas=metricas_x, programa=programa_x or None)
-                veces_x = hist.contar_por_codigo((programa_x or {}).get("codigo", ""))
-                if veces_x >= 3:
-                    st.warning(
-                        f"⚠️ Esta asignatura ya fue procesada **{veces_x} veces**. "
-                        "Verifica si corresponde a una nueva versión.",
-                        icon="🔁",
-                    )
 
                 n_anot_x = 0
                 for linea in log_x:
@@ -1222,96 +1789,521 @@ def _render_instancia_escala(tab, instancia_num, key_prefix):
                     )
 
 
-# Renderizar I2 e I3 con la función compartida
-_render_instancia_escala(tab_i2, instancia_num=2, key_prefix="i2")
-_render_instancia_escala(tab_i3, instancia_num=3, key_prefix="i3")
+# ── Revisoras DEL: I2 e I3 en una sola pestaña ───────────────────────────────
+with tab_del:
+    st.markdown("### Correcciones del equipo DEL")
+    st.caption("Selecciona la instancia según quién está revisando.")
+
+    _inst_sel = st.radio(
+        "¿Qué instancia aplicas?",
+        ["📝 1ª revisora DEL (Instancia 2)", "✅ 2ª revisora / aprobación final (Instancia 3)"],
+        horizontal=True,
+        key="del_instancia_radio",
+    )
+    _inst_num = 2 if "2" in _inst_sel else 3
+
+    st.markdown("---")
+    _render_instancia_escala(tab_del, instancia_num=_inst_num,
+                             key_prefix=f"i{_inst_num}")
+
+# ═════════════════════════════════════════════════════════════════════════
+#  TAB DISEÑO DE RECURSOS
+# ═════════════════════════════════════════════════════════════════════════
+
+try:
+    import generar_recursos as gr
+    RECURSOS_OK = True
+except ImportError:
+    RECURSOS_OK = False
+
+with tab_recursos:
+    st.markdown("### 🎨 Diseño de Recursos Didácticos T1–T4")
+
+    if not RECURSOS_OK:
+        st.error(
+            "No se encontró `generar_recursos.py`. "
+            "Verifica que esté en la misma carpeta que esta app.",
+            icon="⚙️",
+        )
+        st.stop()
+
+    # ── Selector de tipo de recurso ────────────────────────────────────────
+    st.markdown("""
+<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:0.6rem;margin-bottom:1.2rem">
+  <div style="background:#DCF0E4;border:2px solid #006633;border-radius:10px;
+              padding:0.8rem 0.5rem;text-align:center;cursor:pointer">
+    <div style="font-size:1.4rem">🎬</div>
+    <div style="font-size:0.75rem;font-weight:700;color:#004d26">T1</div>
+    <div style="font-size:0.65rem;color:#336644">Videoclase</div>
+  </div>
+  <div style="background:#EBF2FB;border:2px solid #2E5FA3;border-radius:10px;
+              padding:0.8rem 0.5rem;text-align:center;cursor:pointer">
+    <div style="font-size:1.4rem">🖼️</div>
+    <div style="font-size:0.75rem;font-weight:700;color:#1d3f80">T2</div>
+    <div style="font-size:0.65rem;color:#4060a0">Genially</div>
+  </div>
+  <div style="background:#F0EAFB;border:2px solid #6B3FA0;border-radius:10px;
+              padding:0.8rem 0.5rem;text-align:center;cursor:pointer">
+    <div style="font-size:1.4rem">📄</div>
+    <div style="font-size:0.75rem;font-weight:700;color:#4a2880">T3</div>
+    <div style="font-size:0.65rem;color:#7050b0">Guía</div>
+  </div>
+  <div style="background:#E6F5F5;border:2px solid #007A7A;border-radius:10px;
+              padding:0.8rem 0.5rem;text-align:center;cursor:pointer">
+    <div style="font-size:1.4rem">📝</div>
+    <div style="font-size:0.75rem;font-weight:700;color:#005555">T4</div>
+    <div style="font-size:0.65rem;color:#007070">Foro/Quiz/Tarea</div>
+  </div>
+</div>
+""", unsafe_allow_html=True)
+
+    _tipo_recurso = st.radio(
+        "Tipo de recurso a generar",
+        ["🎬 T1 — Guión de videoclase", "🖼️ T2 — Estructura Genially",
+         "📄 T3 — Guía de aprendizaje", "📝 T4 — Foro / Quiz / Tarea"],
+        horizontal=True,
+        label_visibility="collapsed",
+        key="rec_tipo",
+    )
+    _es_t1 = "T1" in _tipo_recurso
+    _es_t2 = "T2" in _tipo_recurso
+    _es_t3 = "T3" in _tipo_recurso
+    _es_t4 = "T4" in _tipo_recurso
+
+    st.divider()
+
+    # ── 1 · Planificación ─────────────────────────────────────────────────
+    st.markdown("#### 1 · Planificación")
+
+    _rec_xlsx = st.file_uploader(
+        "📊 Planificación didáctica (.xlsx)",
+        type="xlsx",
+        key="rec_xlsx",
+        help="Sube la planificación procesada (descargada del tab Revisar) "
+             "o la planificación original del docente.",
+    )
+
+    _unidades_disp: list[tuple[int, str]] = []
+    if _rec_xlsx:
+        try:
+            with st.spinner("Leyendo unidades..."):
+                _unidades_disp = gr.listar_unidades(_rec_xlsx.getvalue())
+            _rec_xlsx.seek(0)
+            if _unidades_disp:
+                st.success(
+                    f"Planificación leída — {len(_unidades_disp)} unidad(es) encontrada(s).",
+                    icon="✅",
+                )
+            else:
+                st.warning(
+                    "No se encontraron unidades en el archivo. "
+                    "Verifica que el Excel tenga la hoja 'Planificación por unidades'.",
+                    icon="⚠️",
+                )
+        except Exception as _e_xl:
+            st.error(f"No se pudo leer el Excel: {_e_xl}", icon="🔴")
+
+    if not _unidades_disp:
+        st.caption("⬆ Sube el archivo .xlsx para continuar.")
+
+    # ── Nota T1 reutilizado ────────────────────────────────────────────────
+    if _es_t1 and _unidades_disp:
+        st.info(
+            "**T1 reutilizado** — Si este recurso ya fue contabilizado en otra sesión, "
+            "no vuelvas a sumar sus minutos en la fórmula de carga académica. "
+            "Solo referenciarlo pedagógicamente está bien; las horas se cuentan **una sola vez**.",
+            icon="ℹ️",
+        )
+
+    # ── 2 · Selección de unidad y opciones ────────────────────────────────
+    if _unidades_disp:
+        st.markdown("#### 2 · Opciones")
+
+        _col_u, _col_d = st.columns([2, 1])
+        with _col_u:
+            _unidad_opciones = [f"Unidad {n}: {nombre}" for n, nombre in _unidades_disp]
+            _unidad_sel_idx  = st.selectbox(
+                "Unidad",
+                range(len(_unidades_disp)),
+                format_func=lambda i: _unidad_opciones[i],
+                key="rec_unidad",
+            )
+            _num_unidad = _unidades_disp[_unidad_sel_idx][0]
+
+        with _col_d:
+            if _es_t1:
+                _duracion = st.selectbox(
+                    "Duración (min)",
+                    [5, 8, 10, 12, 15],
+                    index=2,
+                    key="rec_duracion",
+                    help="Rango institucional: 8–12 min ≈ 0,5 hrs de carga estudiantil. "
+                         "Si el programa no especifica duración, elige dentro de este rango.",
+                )
+            elif _es_t4:
+                _tipo_t4 = st.selectbox(
+                    "Tipo T4",
+                    ["tarea", "foro", "quiz"],
+                    format_func=lambda t: {
+                        "tarea": "📋 Tarea / producción",
+                        "foro":  "💬 Foro de participación",
+                        "quiz":  "✅ Quiz de autoevaluación",
+                    }[t],
+                    key="rec_t4_tipo",
+                )
+            else:
+                st.empty()
+
+        # ── Motor IA ──────────────────────────────────────────────────────
+        st.markdown("**Motor de IA**")
+        _col_b, _col_m, _col_k = st.columns([1, 2, 2])
+        with _col_b:
+            _rec_backend = st.selectbox(
+                "Backend",
+                gr.BACKENDS,
+                key="rec_backend",
+                help="Claude = mejor calidad · Ollama = local y gratuito",
+            )
+        with _col_m:
+            _rec_model = st.text_input(
+                "Modelo",
+                value=gr.BACKEND_DEFAULTS[_rec_backend]["model"],
+                key=f"rec_model_{_rec_backend}",
+            )
+        with _col_k:
+            _rec_apikey = st.text_input(
+                "API Key",
+                value="",
+                type="password",
+                key="rec_apikey",
+                placeholder="No requerida para Ollama",
+                help="Anthropic / OpenAI / Grok según el backend.",
+            )
+
+        if _rec_backend == "ollama":
+            st.info(
+                f"Ollama corre localmente. Asegúrate de que esté activo (`ollama serve`) "
+                f"y que el modelo `{_rec_model}` esté descargado.",
+                icon="🦙",
+            )
+        elif _rec_backend == "claude" and not _rec_apikey:
+            _env_key = os.environ.get("ANTHROPIC_API_KEY", "")
+            if _env_key:
+                _rec_apikey = _env_key
+                st.success("API Key de Anthropic cargada desde variable de entorno.", icon="🔑")
+            else:
+                st.warning("Ingresa tu API Key de Anthropic para usar Claude.", icon="🔑")
+
+        # ── 3 · Generar ───────────────────────────────────────────────────
+        st.markdown("#### 3 · Generar")
+
+        _listo_rec = bool(
+            _rec_xlsx and _unidades_disp and
+            (_rec_backend == "ollama" or _rec_apikey)
+        )
+
+        _label_btn = {
+            True:  "▶ Generar guión de videoclase",
+            False: "▶ Generar guión de videoclase",
+        }
+        if _es_t2:
+            _label_btn = {True: "▶ Generar estructura Genially", False: "▶ Generar estructura Genially"}
+        elif _es_t3:
+            _label_btn = {True: "▶ Generar guía de aprendizaje", False: "▶ Generar guía de aprendizaje"}
+        elif _es_t4:
+            _label_btn = {True: "▶ Generar consigna T4", False: "▶ Generar consigna T4"}
+
+        _btn_rec = st.button(
+            _label_btn[True],
+            disabled=not _listo_rec,
+            type="primary",
+            key="btn_rec_generar",
+            use_container_width=True,
+            help="Sube el Excel y configura el motor IA para activar." if not _listo_rec else "",
+        )
+        if not _listo_rec and not _rec_xlsx:
+            st.caption("⬆ Sube el Excel de planificación para continuar.")
+
+        if _btn_rec and _listo_rec:
+            _xlsx_bytes_rec = _rec_xlsx.getvalue()
+            _nombre_unidad  = _unidades_disp[_unidad_sel_idx][1]
+
+            if _es_t1:
+                _spinner_msg = (
+                    f"Generando guión de videoclase {_duracion} min — "
+                    f"Unidad {_num_unidad}: {_nombre_unidad}…"
+                )
+            elif _es_t2:
+                _spinner_msg = f"Generando estructura Genially — Unidad {_num_unidad}…"
+            elif _es_t3:
+                _spinner_msg = f"Generando guía de aprendizaje — Unidad {_num_unidad}…"
+            else:
+                _spinner_msg = f"Generando consigna T4 — Unidad {_num_unidad}…"
+
+            with st.spinner(_spinner_msg):
+                if _es_t1:
+                    _rec_texto, _rec_error = gr.generar_guion_t1(
+                        xlsx_bytes=_xlsx_bytes_rec,
+                        num_unidad=_num_unidad,
+                        duracion_min=_duracion,
+                        backend=_rec_backend,
+                        model=_rec_model or None,
+                        api_key=_rec_apikey,
+                    )
+                    _rec_ext  = "txt"
+                    _rec_mime = "text/plain"
+                    _rec_icono = "🎬"
+                elif _es_t2:
+                    _rec_texto, _rec_error = gr.generar_estructura_t2(
+                        xlsx_bytes=_xlsx_bytes_rec,
+                        num_unidad=_num_unidad,
+                        backend=_rec_backend,
+                        model=_rec_model or None,
+                        api_key=_rec_apikey,
+                    )
+                    _rec_ext  = "txt"
+                    _rec_mime = "text/plain"
+                    _rec_icono = "🖼️"
+                elif _es_t3:
+                    _rec_texto, _rec_error = gr.generar_guia_t3(
+                        xlsx_bytes=_xlsx_bytes_rec,
+                        num_unidad=_num_unidad,
+                        backend=_rec_backend,
+                        model=_rec_model or None,
+                        api_key=_rec_apikey,
+                    )
+                    _rec_ext  = "txt"
+                    _rec_mime = "text/plain"
+                    _rec_icono = "📄"
+                else:
+                    _rec_texto, _rec_error = gr.generar_consigna_t4(
+                        xlsx_bytes=_xlsx_bytes_rec,
+                        num_unidad=_num_unidad,
+                        tipo_t4=_tipo_t4,
+                        backend=_rec_backend,
+                        model=_rec_model or None,
+                        api_key=_rec_apikey,
+                    )
+                    _rec_ext  = "txt"
+                    _rec_mime = "text/plain"
+                    _rec_icono = "📝"
+
+            st.divider()
+
+            if _rec_error:
+                st.error(
+                    f"Error al generar el recurso: {_rec_error}\n\n"
+                    "Verifica la API key o que Ollama esté activo.",
+                    icon="🔴",
+                )
+            else:
+                if _es_t1:   _tipo_label = "Guión_Videoclase"
+                elif _es_t2: _tipo_label = "Estructura_Genially"
+                elif _es_t3: _tipo_label = "Guia_Aprendizaje"
+                else:        _tipo_label = f"Consigna_T4_{_tipo_t4.capitalize()}"
+
+                _nombre_limpio_rec = re.sub(r'[\\/:*?"<>|\s]+', '_', _nombre_unidad)
+                _fname_rec = f"U{_num_unidad}_{_tipo_label}_{_nombre_limpio_rec}.{_rec_ext}"
+
+                # Guardar en session_state para persistencia
+                st.session_state["rec_ultimo_texto"] = _rec_texto
+                st.session_state["rec_ultimo_fname"] = _fname_rec
+                st.session_state["rec_ultimo_icono"] = _rec_icono
+
+            # ── Mostrar resultado guardado ─────────────────────────────────
+        _rec_cache_texto = st.session_state.get("rec_ultimo_texto", "")
+        _rec_cache_fname = st.session_state.get("rec_ultimo_fname", "recurso.txt")
+        _rec_cache_icono = st.session_state.get("rec_ultimo_icono", "📄")
+
+        if _rec_cache_texto:
+            _n_lineas = len(_rec_cache_texto.splitlines())
+            _n_palabras = len(_rec_cache_texto.split())
+            col_m1, col_m2 = st.columns(2)
+            col_m1.metric("Líneas generadas", _n_lineas)
+            col_m2.metric("Palabras", _n_palabras)
+
+            with st.expander(
+                f"{_rec_cache_icono} Vista previa — {_rec_cache_fname}",
+                expanded=True,
+            ):
+                st.text(_rec_cache_texto)
+
+            st.download_button(
+                label=f"⬇ Descargar {_rec_cache_fname}",
+                data=_rec_cache_texto.encode("utf-8"),
+                file_name=_rec_cache_fname,
+                mime="text/plain",
+                type="primary",
+                use_container_width=True,
+            )
+            st.caption(
+                "Revisa el contenido antes de usarlo en producción. "
+                "El recurso está basado en los datos declarados en la planificación."
+            )
+
+            if st.button("🗑 Limpiar resultado", key="btn_rec_limpiar"):
+                st.session_state.pop("rec_ultimo_texto", None)
+                st.session_state.pop("rec_ultimo_fname", None)
+                st.session_state.pop("rec_ultimo_icono", None)
+                st.rerun()
+
+# ═════════════════════════════════════════════════════════════════════════
+#  TAB ESCALA DE APRECIACIÓN
+# ═════════════════════════════════════════════════════════════════════════
+
+with tab_escala:
+    st.markdown("### 📊 Escala de Apreciación UST — 45 Criterios")
+
+    _escala_cache = st.session_state.get("escala_resultado")
+
+    if not ESCALA_OK:
+        st.warning(
+            "Los módulos de evaluación avanzada no están disponibles. "
+            "Verifica que `agente_criterios.py`, `calculos_del.py` y `reescritura_llm.py` "
+            "estén en la misma carpeta que esta app.",
+            icon="⚙️",
+        )
+    elif not _escala_cache:
+        st.info(
+            "Aún no hay evaluación disponible. "
+            "Procesa una planificación en **Instancia 1** con la opción "
+            "\"Escala de Apreciación\" activada para ver los resultados aquí.",
+            icon="💡",
+        )
+        st.markdown("""
+**¿Qué evalúa la Escala de Apreciación?**
+
+| Sección | Criterios | Tipo | Qué verifica |
+|---------|-----------|------|-------------|
+| Síntesis didáctica | C01–C15 | Cruce vs programa PDF | Datos, RA, créditos |
+| Identificación | C16–C18 | Estructura automática | Unidades, sesiones, momentos |
+| Est. Metodológicas | C19–C26 | Semántico (IA) | Redacción imperativa, estructura de momentos, propósito/retroalimentación |
+| Recursos (G3) | C27–C35 | Semántico (IA) | 5 campos por recurso, ubicación, extensión, T1 reutilizados |
+| Est. Evaluativas | C36–C41 | Automático + semántico | Klarway/Turnitin, alineación RA↔evaluación |
+| Carga Académica | C42–C45 | Matemático + semántico | Horas vs rangos de estandarización, sobreconteo de T1 |
+
+**Nuevas detecciones (2026-1):**
+- **T1 reutilizado** (C30): si el mismo recurso aparece en varias sesiones, se alerta si sus minutos se suman más de una vez.
+- **Estandarización de carga** (C44): verifica que la duración declarada sea coherente con los rangos institucionales (videoclase 8–12 min, H5P 0,5 hrs, etc.).
+- **Prueba del estudiante autónomo**: una actividad es incompleta si el/la estudiante no puede realizarla sin preguntar al/la docente.
+        """)
+    else:
+        _r = _escala_cache.get("resumen", {})
+        _n_si   = _r.get("SI", 0)
+        _n_parc = _r.get("PARCIALMENTE", 0)
+        _n_no   = _r.get("NO", 0)
+        _pct    = _r.get("pct_cumplimiento", 0)
+        _total  = _r.get("total", 45)
+        _arch   = st.session_state.get("escala_archivo", "planificación")
+
+        st.caption(f"Última evaluación: **{_arch}**")
+
+        # ── Resumen global ───────────────────────────────────────────────
+        _c1, _c2, _c3, _c4 = st.columns(4)
+        _c1.metric("✅ Cumple (SI)", _n_si,
+                   delta=f"{round(_n_si / _total * 100)}% del total" if _total else "—")
+        _c2.metric("⚠️ Parcialmente", _n_parc)
+        _c3.metric("❌ No cumple", _n_no,
+                   delta="revisar" if _n_no else "sin errores críticos",
+                   delta_color="inverse" if _n_no else "normal")
+        _c4.metric("Cumplimiento ponderado", f"{_pct}%")
+
+        # Barra de progreso
+        _color_pct = "#006633" if _pct >= 80 else "#C8A951" if _pct >= 50 else "#CC3333"
+        st.markdown(
+            f"<div style='background:#E8E8E8;border-radius:99px;height:14px;overflow:hidden;margin:0.5rem 0'>"
+            f"<div style='background:{_color_pct};height:100%;width:{_pct}%;border-radius:99px;'></div>"
+            f"</div><p style='text-align:center;font-size:0.82rem;color:#555;margin-top:4px'>"
+            f"Cumplimiento ponderado: {_pct}% "
+            f"({_n_si} SI · {_n_parc} Parcial · {_n_no} No · de {_total} criterios)</p>",
+            unsafe_allow_html=True,
+        )
+
+        st.divider()
+
+        # ── Vista por sección ────────────────────────────────────────────
+        if CRITERIOS:
+            _ICONOS_E = {"SI": "✅", "PARCIALMENTE": "⚠️", "NO": "❌",
+                         "N/A": "⬜", "ERROR": "🔴"}
+            _crits_d  = _escala_cache.get("criterios", {})
+            _por_sec  = {}
+            for _c in CRITERIOS:
+                _por_sec.setdefault(_c["seccion"], []).append(_c)
+
+            for _sec_nombre, _sec_crits in _por_sec.items():
+                _sec_si  = sum(1 for _c in _sec_crits if _crits_d.get(_c["id"], {}).get("estado") == "SI")
+                _sec_no  = sum(1 for _c in _sec_crits if _crits_d.get(_c["id"], {}).get("estado") == "NO")
+                _sec_par = sum(1 for _c in _sec_crits if _crits_d.get(_c["id"], {}).get("estado") == "PARCIALMENTE")
+                _sec_tot = len(_sec_crits)
+                _sec_ok  = _sec_no == 0
+
+                _header_color = (
+                    "background:#C8E6D4;color:#004d26" if _sec_no == 0 and _sec_par == 0 else
+                    "background:#FFF3CD;color:#7A5700" if _sec_no == 0 else
+                    "background:#FDDCDC;color:#8B0000"
+                )
+
+                with st.expander(
+                    f"{'✅' if _sec_ok else '❌'} **{_sec_nombre}** — "
+                    f"{_sec_si} SI · {_sec_par} Parcial · {_sec_no} No  ({_sec_tot} criterios)",
+                    expanded=(_sec_no > 0),
+                ):
+                    for _c in _sec_crits:
+                        _res_c = _crits_d.get(_c["id"], {})
+                        _ico   = _ICONOS_E.get(_res_c.get("estado", "NO"), "❓")
+                        _obs   = _res_c.get("observacion", "")
+                        _tipo_badge = (
+                            "<span style='font-size:0.68rem;background:#E8F5EE;"
+                            "color:#006633;border-radius:4px;padding:1px 6px;margin-left:6px'>auto</span>"
+                            if _c.get("tipo") == "auto" else
+                            "<span style='font-size:0.68rem;background:#EDE8F5;"
+                            "color:#5B2DB0;border-radius:4px;padding:1px 6px;margin-left:6px'>IA</span>"
+                        )
+                        st.markdown(
+                            f"{_ico} **C{_c['id']:02d}** {_c['texto']}{_tipo_badge}",
+                            unsafe_allow_html=True,
+                        )
+                        if _obs:
+                            st.caption(f"   ↳ {_obs}")
+
+        st.divider()
+
+        # ── Descargas ────────────────────────────────────────────────────
+        col_dl1, col_dl2 = st.columns(2)
+        with col_dl1:
+            if ESCALA_OK:
+                _txt_escala = reporte_escala(_escala_cache)
+                st.download_button(
+                    "⬇ Descargar reporte (.txt)",
+                    data=_txt_escala,
+                    file_name=_arch.replace(".xlsx", "_Escala.txt"),
+                    mime="text/plain",
+                    use_container_width=True,
+                )
+        with col_dl2:
+            import json as _json
+            st.download_button(
+                "⬇ Descargar datos (.json)",
+                data=_json.dumps(_escala_cache, ensure_ascii=False, indent=2),
+                file_name=_arch.replace(".xlsx", "_Escala.json"),
+                mime="application/json",
+                use_container_width=True,
+            )
+
+        if st.button("🔄 Limpiar evaluación", key="btn_escala_limpiar"):
+            st.session_state.pop("escala_resultado", None)
+            st.session_state.pop("escala_archivo", None)
+            st.rerun()
 
 # ═════════════════════════════════════════════════════════════════════════
 #  HISTORIAL
 # ═════════════════════════════════════════════════════════════════════════
 
-with tab_hist:
-    st.markdown("### Historial de planificaciones procesadas")
-
-    registros = hist.obtener_historial()
-
-    if not registros:
-        st.info("Aún no hay registros. Procesa una planificación para comenzar el historial.")
-    else:
-        # ── Métricas globales ───────────────────────────────────────────
-        total_proc   = len(registros)
-        total_corr   = sum(r["total_correcciones"] for r in registros)
-        total_crit_e = sum(r["criterios_error"] for r in registros)
-
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Planificaciones procesadas", total_proc)
-        c2.metric("Correcciones acumuladas", total_corr)
-        c3.metric("Criterios con error (acum.)", total_crit_e)
-
-        st.divider()
-
-        # ── Tabla de registros ──────────────────────────────────────────
-        import pandas as pd
-
-        df = pd.DataFrame(registros)
-        df = df.rename(columns={
-            "id":                  "ID",
-            "fecha_hora":          "Fecha",
-            "instancia":           "I",
-            "codigo_asignatura":   "Código",
-            "nombre_asignatura":   "Asignatura",
-            "archivo_nombre":      "Archivo",
-            "total_correcciones":  "Corr.",
-            "criterios_ok":        "✅",
-            "criterios_error":     "❌",
-            "criterios_manual":    "⚠️",
-            "discrepancias_prog":  "Disc.",
-            "lt_errores":          "LT err.",
-            "lt_correcciones":     "LT corr.",
-            "tiene_as":            "A+S",
-            "as_ok":               "A+S✅",
-            "as_error":            "A+S❌",
-        })
-        df["A+S"] = df["A+S"].map({0: "", 1: "Sí"})
-        st.dataframe(
-            df.drop(columns=["A+S✅", "A+S❌"], errors="ignore"),
-            use_container_width=True,
-            hide_index=True,
-        )
-
-        # ── Resumen por asignatura ──────────────────────────────────────
-        st.divider()
-        st.markdown("#### Resumen por asignatura")
-        resumen = hist.resumen_errores()
-        if resumen:
-            df_res = pd.DataFrame(resumen).rename(columns={
-                "codigo_asignatura":  "Código",
-                "nombre_asignatura":  "Asignatura",
-                "veces_procesada":    "Veces",
-                "total_corr":         "Corr. totales",
-                "total_crit_err":     "Crit. error",
-                "total_disc":         "Discrepancias",
-                "total_lt":           "LT errores",
-            })
-            st.dataframe(df_res, use_container_width=True, hide_index=True)
-
-        # ── Exportar CSV ────────────────────────────────────────────────
-        st.divider()
-        csv_bytes = df.to_csv(index=False).encode("utf-8")
-        st.download_button(
-            "⬇ Exportar historial completo (.csv)",
-            data=csv_bytes,
-            file_name="historial_del.csv",
-            mime="text/csv",
-            type="primary",
-            use_container_width=True,
-        )
-
 # ═════════════════════════════════════════════════════════════════════════
-#  DICCIONARIO UST
+#  HERRAMIENTAS (Diccionario + APA)
 # ═════════════════════════════════════════════════════════════════════════
 
-with tab_dict:
+with tab_config:
     st.markdown("### Diccionario UST personalizable")
     st.caption(
         "Las entradas base (en gris) vienen del script y no se pueden borrar desde aquí. "
@@ -1441,3 +2433,124 @@ with tab_dict:
                 st.warning(f"No se pudo generar la referencia: {estado}")
         else:
             st.warning("Ingresa una URL o DOI para continuar.")
+
+# ═════════════════════════════════════════════════════════════════════════
+#  TAB ANÁLISIS VISUAL — Qwen2.5-VL
+# ═════════════════════════════════════════════════════════════════════════
+
+with tab_vision:
+    st.markdown("""
+<div class="vision-card">
+  <h4>🔍 Análisis Visual con Qwen2.5-VL</h4>
+  <p style="margin:0;font-size:0.86rem;color:#4a3a8a;">
+    Sube una imagen de un documento (planificación, programa, Genially, captura de pantalla)
+    y el modelo multimodal analizará su contenido de forma inteligente.
+  </p>
+  <br>
+  <span class="model-badge">🦙 Qwen2.5-VL · Local · Sin costo de API</span>
+  &nbsp;
+  <span style="font-size:0.74rem;color:#7a5c00;background:#FFF3CD;border-radius:8px;
+               padding:3px 10px;border:1px solid #EDD89A;">
+    ⚠️ 16 GB RAM — no correr junto al modelo de texto
+  </span>
+</div>
+""", unsafe_allow_html=True)
+
+    col_v1, col_v2 = st.columns([1.2, 1])
+    with col_v1:
+        imagen_up = st.file_uploader(
+            "📷 Imagen del documento",
+            type=["png", "jpg", "jpeg", "webp"],
+            key="vision_img",
+            help="Captura de pantalla, foto o exportación PNG/JPG de la planificación, "
+                 "programa u otro recurso UST.",
+        )
+    with col_v2:
+        tipo_analisis = st.selectbox(
+            "Tipo de análisis",
+            ["planificacion", "programa", "genially", "libre"],
+            format_func=lambda t: {
+                "planificacion": "📋 Planificación didáctica",
+                "programa":      "📄 Programa de asignatura",
+                "genially":      "🎨 Recurso Genially / infografía",
+                "libre":         "💬 Análisis libre",
+            }[t],
+            key="vision_tipo",
+        )
+        modelo_vision = st.text_input(
+            "Modelo Ollama",
+            value=apa_llm.MODELO_VISION,
+            key="vision_model",
+            help="Modelo multimodal instalado en Ollama. "
+                 "Ejecuta `ollama list` para ver los disponibles.",
+        )
+
+    prompt_extra = st.text_area(
+        "Instrucción adicional (opcional)",
+        key="vision_prompt",
+        placeholder="Ej: Enfócate especialmente en los recursos T1 y T2 de la Unidad 2.",
+        height=80,
+    )
+
+    # Vista previa de la imagen
+    if imagen_up:
+        with st.expander("👁 Vista previa", expanded=True):
+            st.image(imagen_up, use_container_width=True)
+        imagen_up.seek(0)
+
+    listo_v = bool(imagen_up)
+    if st.button(
+        "🔍 Analizar documento",
+        disabled=not listo_v,
+        type="primary",
+        key="btn_vision",
+        use_container_width=True,
+        help="Sube una imagen para activar el análisis." if not listo_v else "",
+    ):
+        imagen_bytes = imagen_up.read()
+        with st.spinner(f"Qwen2.5-VL analizando imagen ({tipo_analisis})…"):
+            resultado = apa_llm.analizar_imagen_llm(
+                imagen_bytes=imagen_bytes,
+                tipo_analisis=tipo_analisis,
+                prompt_extra=prompt_extra,
+                model=modelo_vision,
+            )
+
+        st.divider()
+        if resultado["error"]:
+            st.error(
+                f"Error al conectar con Ollama: {resultado['error']}\n\n"
+                "Verifica que Ollama esté corriendo (`ollama serve`) "
+                f"y que el modelo `{modelo_vision}` esté instalado.",
+                icon="🔴",
+            )
+        else:
+            st.markdown("### Resultado del análisis")
+            st.markdown(
+                f'<div class="vision-result">{resultado["resultado"]}</div>',
+                unsafe_allow_html=True,
+            )
+            st.download_button(
+                "⬇ Descargar análisis (.txt)",
+                data=resultado["resultado"].encode("utf-8"),
+                file_name=f"analisis_visual_{tipo_analisis}.txt",
+                mime="text/plain",
+                key="btn_vision_download",
+            )
+
+    if not listo_v:
+        st.caption("⬆ Sube una imagen para activar el análisis.")
+
+    st.divider()
+    st.markdown("""
+**¿Cómo usar esta función?**
+
+| Caso de uso | Tipo de análisis |
+|-------------|-----------------|
+| Revisar una planificación escaneada o capturada | 📋 Planificación |
+| Extraer datos de un programa en PDF como imagen | 📄 Programa |
+| Verificar cumplimiento visual de un Genially | 🎨 Genially |
+| Cualquier documento educativo | 💬 Análisis libre |
+
+El modelo corre **100% local** en tu equipo — sin enviar datos a servidores externos.
+""")

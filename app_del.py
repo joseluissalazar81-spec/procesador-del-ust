@@ -1636,6 +1636,57 @@ def _render_instancia_escala(tab, instancia_num, key_prefix):
                  "(solo cambios unívocos: tildes faltantes, errores ortográficos claros).",
         )
 
+        # ── Escala IA 45 criterios ────────────────────────────────────────
+        if ESCALA_OK:
+            with st.expander("🎯 Escala de Apreciación UST (45 criterios con IA)", expanded=False):
+                st.caption(
+                    "Evalúa los 45 criterios institucionales con IA. "
+                    "Usa **Ollama local** (gratis) o **Claude API** (mejor calidad)."
+                )
+                _col_ex0, _col_ex1 = st.columns([1, 1])
+                with _col_ex0:
+                    usar_escala_x = st.checkbox(
+                        "Activar evaluación",
+                        value=False,
+                        key=f"{key_prefix}_escala_activo",
+                    )
+                with _col_ex1:
+                    _bk_opts_x = ["ollama (local, gratis)", "claude (API)"]
+                    _bk_sel_x  = st.selectbox(
+                        "Motor IA",
+                        _bk_opts_x,
+                        key=f"{key_prefix}_escala_backend",
+                        help="Ollama corre localmente sin costo. Claude requiere API key.",
+                    )
+                    backend_escala_x = "ollama" if "ollama" in _bk_sel_x else "claude"
+
+                if backend_escala_x == "ollama":
+                    modelo_escala_x = st.text_input(
+                        "Modelo Ollama",
+                        value=apa_llm.MODELO_TEXTO,
+                        key=f"{key_prefix}_escala_modelo_ollama",
+                        help=f"Recomendado: {apa_llm.MODELO_TEXTO}. Ejecuta `ollama list` para ver disponibles.",
+                    )
+                    apikey_escala_x = ""
+                    if usar_escala_x:
+                        st.success(f"Usando **{modelo_escala_x}** local — sin costo de API.", icon="🦙")
+                else:
+                    modelo_escala_x = ""
+                    apikey_escala_x = st.text_input(
+                        "API Key de Anthropic",
+                        value=os.environ.get("ANTHROPIC_API_KEY", ""),
+                        type="password",
+                        key=f"{key_prefix}_escala_key",
+                        placeholder="sk-ant-api03-...",
+                    )
+                    if usar_escala_x and not apikey_escala_x:
+                        st.warning("Ingresa la API Key para usar Claude.", icon="🔑")
+        else:
+            usar_escala_x   = False
+            backend_escala_x = "ollama"
+            modelo_escala_x  = apa_llm.MODELO_TEXTO
+            apikey_escala_x  = ""
+
         programa_x = {}
         if pdf_x:
             with st.spinner("Leyendo programa..."):
@@ -1749,6 +1800,77 @@ def _render_instancia_escala(tab, instancia_num, key_prefix):
                     with st.expander("📊 Verificación contra programa", expanded=True):
                         for linea in metricas_x["discrepancias_detalle"]:
                             st.markdown(linea)
+
+                # ── Escala IA 45 criterios ────────────────────────────────
+                _escala_activa_x = (
+                    ESCALA_OK and usar_escala_x and
+                    (backend_escala_x == "ollama" or apikey_escala_x)
+                )
+                if _escala_activa_x:
+                    _llm_label_x = (f"Ollama/{modelo_escala_x}"
+                                    if backend_escala_x == "ollama" else "Claude Sonnet")
+                    with st.spinner(f"{_llm_label_x} evaluando Escala de Apreciación (45 criterios)…"):
+                        try:
+                            escala_resultado_x = evaluar_45_criterios(
+                                plan_f.getvalue(),
+                                api_key=apikey_escala_x,
+                                backend=backend_escala_x,
+                                modelo_local=modelo_escala_x or apa_llm.MODELO_TEXTO,
+                            )
+                            st.session_state["escala_resultado"] = escala_resultado_x
+                            st.session_state["escala_archivo"]   = plan_f.name
+                        except Exception as _ex:
+                            st.warning(f"Error en Escala IA: {str(_ex)[:120]}", icon="⚠️")
+                            escala_resultado_x = None
+
+                    if escala_resultado_x:
+                        _rx = escala_resultado_x.get("resumen", {})
+                        st.divider()
+                        st.markdown("### 📊 Escala de Apreciación UST — 45 Criterios")
+                        _cx1, _cx2, _cx3, _cx4 = st.columns(4)
+                        _cx1.metric("✅ Cumple (SI)", _rx.get("SI", 0))
+                        _cx2.metric("⚠️ Parcialmente", _rx.get("PARCIALMENTE", 0))
+                        _cx3.metric("❌ No cumple", _rx.get("NO", 0),
+                                    delta="revisar" if _rx.get("NO", 0) else "sin errores críticos",
+                                    delta_color="inverse" if _rx.get("NO", 0) else "normal")
+                        _cx4.metric("Cumplimiento", f"{_rx.get('pct_cumplimiento', 0)}%")
+                        st.progress(
+                            (_rx.get("SI", 0) + _rx.get("PARCIALMENTE", 0) * 0.5) /
+                            max(_rx.get("total", 45), 1),
+                            text=f"Cumplimiento ponderado: {_rx.get('pct_cumplimiento', 0)}% "
+                                 f"({_rx.get('SI',0)} SI · {_rx.get('PARCIALMENTE',0)} Parcial "
+                                 f"· {_rx.get('NO',0)} No)"
+                        )
+                        # Detalle por criterio
+                        if CRITERIOS:
+                            _crits_x = escala_resultado_x.get("criterios", {})
+                            _ICONOS_X = {"SI": "✅", "PARCIALMENTE": "⚠️", "NO": "❌",
+                                         "N/A": "⬜", "ERROR": "🔴"}
+                            _por_sec_x = {}
+                            for _c in CRITERIOS:
+                                _por_sec_x.setdefault(_c["seccion"], []).append(_c)
+                            for _sec_x, _crits_sec_x in _por_sec_x.items():
+                                _no_x  = sum(1 for _c in _crits_sec_x
+                                             if _crits_x.get(_c["id"], {}).get("estado") == "NO")
+                                _par_x = sum(1 for _c in _crits_sec_x
+                                             if _crits_x.get(_c["id"], {}).get("estado") == "PARCIALMENTE")
+                                with st.expander(
+                                    f"{'✅' if _no_x == 0 else '❌'} **{_sec_x}** — "
+                                    f"{len(_crits_sec_x) - _no_x - _par_x} SI · {_par_x} Parcial · {_no_x} No",
+                                    expanded=(_no_x > 0),
+                                ):
+                                    for _c in _crits_sec_x:
+                                        _res_cx = _crits_x.get(_c["id"], {})
+                                        _ico_x  = _ICONOS_X.get(_res_cx.get("estado", "NO"), "❓")
+                                        _obs_x  = _res_cx.get("observacion", "")
+                                        st.markdown(f"{_ico_x} **C{_c['id']:02d}** {_c['texto']}")
+                                        if _obs_x:
+                                            st.caption(f"   ↳ {_obs_x}")
+                        st.info(
+                            "Los resultados completos también están disponibles en el tab "
+                            "**📊 Escala de Apreciación**.",
+                            icon="💡",
+                        )
 
                 if instancia_num == 3 and metricas_x["criterios_error"] == 0:
                     st.success(

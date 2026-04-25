@@ -34,6 +34,45 @@ except ImportError:
     def cruzar_con_planificacion(*a, **kw):
         return [], []
 
+# ── Conversor ProgramaOficial → dict (formato esperado por revisar_planificaciones) ──
+def _prog_a_dict(prog) -> dict:
+    """
+    Convierte un objeto ProgramaOficial (cruce_programa) al formato dict
+    que espera revisar_planificaciones.py (verificar_horas, verificar_contra_programa).
+    Si prog ya es dict o es None, lo devuelve tal cual.
+    """
+    if prog is None:
+        return {}
+    if isinstance(prog, dict):
+        return prog
+    try:
+        horas     = getattr(prog, "horas", {}) or {}
+        unidades  = []
+        for u in getattr(prog, "unidades", []):
+            unidades.append({
+                "numero": u.get("num", ""),
+                "nombre": u.get("nombre", ""),
+                "horas":  u.get("horas", 0),
+            })
+        creditos = getattr(prog, "creditos", None)
+        try:
+            creditos = int(creditos) if creditos else None
+        except (ValueError, TypeError):
+            pass
+        return {
+            "codigo":             getattr(prog, "codigo", None),
+            "asignatura":         getattr(prog, "nombre_asignatura", None),
+            "creditos":           creditos,
+            "area":               getattr(prog, "area_ocde", None),
+            "total_pedagogicas":  horas.get("total"),
+            "horas_tpe":          horas.get("tpe"),
+            "unidades":           unidades,
+            "ponderaciones":      {},
+            "pct_examen":         None,
+        }
+    except Exception:
+        return {}
+
 # ── Módulos DEL avanzados (escala + reescritura) ──────────────────────────────
 try:
     from agente_criterios import evaluar_45_criterios, reporte_escala, CRITERIOS
@@ -1185,7 +1224,7 @@ with tab_i1:
 
                 log, ok = rp.procesar_asignatura(
                     carpeta_asig,
-                    programa=programa,
+                    programa=_prog_a_dict(programa),
                     es_as=es_as,
                 )
 
@@ -1742,7 +1781,7 @@ def _render_instancia_escala(tab, instancia_num, key_prefix):
                     plan_bytes=plan_f.getvalue(),
                     escala_bytes=escala_f.getvalue(),
                     plan_nombre=plan_f.name,
-                    programa=programa_x or None,
+                    programa=_prog_a_dict(programa_x),
                     es_as=es_as_x,
                     instancia_num=instancia_num,
                 )

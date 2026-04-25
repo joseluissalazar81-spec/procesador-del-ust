@@ -275,10 +275,8 @@ def verificar_contra_programa(wb, programa, log):
     errores = []
     oks = []
 
-    ws_sint = (_hoja(wb, 'Síntesis didáctica')
-               if 'Síntesis didáctica' in wb.sheetnames else None)
-    ws_plan = (_hoja(wb, 'Planificación por unidades')
-               if 'Planificación por unidades' in wb.sheetnames else None)
+    ws_sint = _hoja(wb, 'Síntesis didáctica') if _tiene_hoja(wb, 'Síntesis didáctica') else None
+    ws_plan = _hoja(wb, 'Planificación por unidades') if _tiene_hoja(wb, 'Planificación por unidades') else None
 
     def sv(ws, r, c):
         v = ws.cell(r, c).value

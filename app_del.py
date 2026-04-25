@@ -673,7 +673,7 @@ def _nombre_descarga(programa: dict | None, instancia: int,
       {CODIGO}_{Nombre_Asignatura}_Revisado_I{N}.xlsx
     Primero lee del dict programa (PDF); si falta algo usa el Excel como fallback.
     """
-    prog = dict(programa or {})
+    prog = _prog_a_dict(programa)
     # Fallback al Excel si el programa no tiene código o nombre
     if xlsx_bytes and (not prog.get("codigo") or not prog.get("asignatura")):
         xlsx_datos = _datos_desde_xlsx(xlsx_bytes)

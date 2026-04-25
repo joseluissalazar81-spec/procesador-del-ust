@@ -897,7 +897,7 @@ with tab_i1:
                 tmp_pdf.write(pdf_file.read())
                 tmp_pdf_path = tmp_pdf.name
             pdf_file.seek(0)
-            programa = rp.extraer_programa_pdf(tmp_pdf_path)
+            programa = cruce_extraer_pdf(tmp_pdf_path)
             os.unlink(tmp_pdf_path)
 
         if programa.get("_error"):
@@ -1165,7 +1165,7 @@ with tab_i1:
                     pdf_path = os.path.join(tmp, pdf_file.name)
                     with open(pdf_path, "wb") as f:
                         f.write(pdf_file.getvalue())
-                    programa = rp.extraer_programa_pdf(pdf_path)
+                    programa = cruce_extraer_pdf(pdf_path)
 
                 log, ok = rp.procesar_asignatura(
                     carpeta_asig,
@@ -1693,7 +1693,7 @@ def _render_instancia_escala(tab, instancia_num, key_prefix):
                 with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp_px:
                     tmp_px.write(pdf_x.read())
                     tmp_px_path = tmp_px.name
-                programa_x = rp.extraer_programa_pdf(tmp_px_path)
+                programa_x = cruce_extraer_pdf(tmp_px_path)
                 os.unlink(tmp_px_path)
             if programa_x.get("_error"):
                 st.warning(f"No se pudo leer el PDF: {programa_x['_error']}")

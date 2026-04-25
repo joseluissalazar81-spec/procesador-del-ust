@@ -1920,102 +1920,73 @@ def detectar_unidades_grupales(ws):
 def corregir_sintesis(ws, log, registro=None):
     """
     Correcciones en Síntesis didáctica:
-    1. Elimina DIAGNÓSTICA y FORMATIVA de col D (procedimientos).
-    2. Normaliza porcentajes en col G a número entero (30% / 0.30 → 30).
-    3. Colorea filas de la tabla RA/Procedimientos:
-       - Sumativa → amarillo pastel
-       - Formativa / Diagnóstica → lila pastel
+    1. Elimina DIAGNÓSTICA/FORMATIVA de col D (procedimientos).
+    2. Normaliza porcentajes en col G a entero (texto '30%' / 0.30 → 30).
+    3. Colorea fila completa (cols A-G) según tipo en col D:
+       Sumativa → amarillo pastel · Formativa/Diagnóstica → lila pastel.
+    La detección es directa por contenido de col D — no depende de rangos.
     """
     from openpyxl.cell.cell import MergedCell
 
     cambios = 0
 
-    # ── Detectar rango de la tabla RA ─────────────────────────────────────
-    # Buscar la fila del encabezado "Resultados de Aprendizaje" (col A)
-    fila_header_ra = None
-    fila_total_ra  = None
-    for row in ws.iter_rows(min_row=1, max_row=ws.max_row, values_only=False):
-        for cell in row:
-            if (cell.column == 1 and cell.value and
-                    isinstance(cell.value, str) and
-                    'resultado' in cell.value.lower() and
-                    'aprendizaje' in cell.value.lower()):
-                fila_header_ra = cell.row
-            if (cell.column == 6 and cell.value and
-                    isinstance(cell.value, str) and
-                    cell.value.strip().upper() == 'TOTAL' and
-                    fila_header_ra and cell.row > fila_header_ra):
-                fila_total_ra = cell.row
-                break
-        if fila_total_ra:
-            break
-
-    COL_MAX_COLOR = 7   # A–G
-
-    # ── 1 & 2 & 3: iterar filas de datos ─────────────────────────────────
     for row in ws.iter_rows(min_row=1, values_only=False):
         r = row[0].row
 
-        for cell in row:
-            # Corrección 1: eliminar DIAGNÓSTICA/FORMATIVA en col D
-            if cell.column == 4 and cell.value and isinstance(cell.value, str):
-                if tiene_bloques_extra(cell.value):
-                    original = cell.value
-                    nuevo = solo_sumativa(cell.value)
-                    log.append(f'    [Síntesis F{r}] Eliminados bloques DIAGNÓSTICA/FORMATIVA')
-                    cell.value = nuevo
-                    aplicar_azul_diff(cell, original, nuevo)
-                    _reg(registro, ws, cell,
-                         'Síntesis: eliminar DIAGNÓSTICA/FORMATIVA de procedimientos',
-                         original, nuevo)
-                    cambios += 1
+        # ── Col D: procedimientos ─────────────────────────────────────────
+        cell_d = ws.cell(r, 4)
+        val_d  = cell_d.value
 
-            # Corrección 2: normalizar porcentajes en col G a número entero
-            if cell.column == 7 and cell.value is not None:
-                val = cell.value
-                num = None
-                if isinstance(val, str):
-                    val_s = val.strip().rstrip('%')
-                    try:
-                        num = float(val_s)
-                        if num <= 1.0:   # era decimal 0.30 → 30
-                            num = round(num * 100)
-                        else:
-                            num = round(num)
-                    except ValueError:
-                        pass
-                elif isinstance(val, float):
-                    if val <= 1.0:
-                        num = round(val * 100)
-                    else:
-                        num = round(val)
-                elif isinstance(val, int):
-                    num = val
+        # Corrección 1: eliminar DIAGNÓSTICA/FORMATIVA
+        if val_d and isinstance(val_d, str) and tiene_bloques_extra(val_d):
+            original = val_d
+            nuevo    = solo_sumativa(val_d)
+            log.append(f'    [Síntesis F{r}] Eliminados bloques DIAGNÓSTICA/FORMATIVA')
+            cell_d.value = nuevo
+            val_d = nuevo
+            aplicar_azul_diff(cell_d, original, nuevo)
+            _reg(registro, ws, cell_d,
+                 'Síntesis: eliminar DIAGNÓSTICA/FORMATIVA de procedimientos',
+                 original, nuevo)
+            cambios += 1
 
-                if num is not None and cell.value != num:
-                    original_pct = cell.value
-                    cell.value = num
-                    aplicar_azul_diff(cell, str(original_pct), str(num))
-                    log.append(f'    [Síntesis F{r}] Porcentaje normalizado: {original_pct!r} → {num}')
-                    cambios += 1
+        # Corrección 3: color según tipo (usa val_d ya corregido)
+        if val_d and isinstance(val_d, str):
+            vd = val_d.lower()
+            if 'sumativ' in vd:
+                fill = _FILL_SUMATIVA
+            elif 'formativ' in vd or 'diagnóst' in vd or 'diagnost' in vd:
+                fill = _FILL_FORMATIVA
+            else:
+                fill = None
+            if fill:
+                for col_idx in range(1, 8):   # cols A–G
+                    c = ws.cell(r, col_idx)
+                    if not isinstance(c, MergedCell):
+                        c.fill = fill
 
-        # Corrección 3: colorear filas de la tabla RA
-        if fila_header_ra and fila_total_ra:
-            if fila_header_ra < r < fila_total_ra:
-                proc_val = ws.cell(r, 4).value
-                if proc_val and isinstance(proc_val, str):
-                    pt = proc_val.lower()
-                    if 'sumativ' in pt:
-                        fill = _FILL_SUMATIVA
-                    elif 'formativ' in pt or 'diagnóst' in pt or 'diagnost' in pt:
-                        fill = _FILL_FORMATIVA
-                    else:
-                        fill = None
-                    if fill:
-                        for col_idx in range(1, COL_MAX_COLOR + 1):
-                            c = ws.cell(r, col_idx)
-                            if not isinstance(c, MergedCell):
-                                c.fill = fill
+        # ── Col G: porcentaje ─────────────────────────────────────────────
+        # Corrección 2: normalizar a número entero
+        cell_g = ws.cell(r, 7)
+        val_g  = cell_g.value
+        if val_g is not None:
+            num = None
+            if isinstance(val_g, str):
+                try:
+                    f = float(val_g.strip().rstrip('%'))
+                    num = round(f * 100) if f <= 1.0 else round(f)
+                except ValueError:
+                    pass
+            elif isinstance(val_g, float):
+                num = round(val_g * 100) if val_g <= 1.0 else round(val_g)
+            elif isinstance(val_g, int):
+                num = val_g  # ya es entero, sin cambio necesario
+
+            if num is not None and val_g != num:
+                log.append(f'    [Síntesis F{r}] Porcentaje normalizado: {val_g!r} → {num}')
+                cell_g.value = num
+                aplicar_azul_diff(cell_g, str(val_g), str(num))
+                cambios += 1
 
     return cambios
 

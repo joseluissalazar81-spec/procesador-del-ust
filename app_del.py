@@ -903,34 +903,37 @@ with tab_i1:
     # Mostrar resumen del programa si ya se subió
     if pdf_file:
         with st.spinner("Leyendo programa..."):
-            with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp_pdf:
-                tmp_pdf.write(pdf_file.read())
-                tmp_pdf_path = tmp_pdf.name
-            pdf_file.seek(0)
-            programa = cruce_extraer_pdf(tmp_pdf_path)
-            os.unlink(tmp_pdf_path)
+            try:
+                with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp_pdf:
+                    tmp_pdf.write(pdf_file.read())
+                    tmp_pdf_path = tmp_pdf.name
+                pdf_file.seek(0)
+                programa = cruce_extraer_pdf(tmp_pdf_path)
+                os.unlink(tmp_pdf_path)
+                _prog_error = None
+            except Exception as _ep:
+                programa = None
+                _prog_error = str(_ep)[:200]
 
-        if programa.get("_error"):
-            st.warning(f"No se pudo leer el PDF: {programa['_error']}")
-            programa = {}
+        if _prog_error:
+            st.warning(f"No se pudo leer el PDF: {_prog_error}", icon="⚠️")
+            programa = None
         else:
             with st.expander("✅ Programa leído — verificar datos extraídos", expanded=False):
                 c1, c2, c3 = st.columns(3)
-                c1.metric("Código", programa.get("codigo") or "—")
-                c2.metric("Créditos", programa.get("creditos") or "—")
-                c3.metric("Área", programa.get("area") or "—")
-                unidades = programa.get("unidades", [])
+                c1.metric("Código",   getattr(programa, "codigo", None) or "—")
+                c2.metric("Créditos", getattr(programa, "creditos", None) or "—")
+                c3.metric("Área",     getattr(programa, "area_ocde", None) or "—")
+                unidades = getattr(programa, "unidades", [])
                 if unidades:
-                    st.markdown("**Unidades y ponderaciones:**")
-                    ponds = programa.get("ponderaciones", {})
+                    st.markdown("**Unidades:**")
                     for u in unidades:
-                        pct = ponds.get(u["numero"], "—")
                         st.markdown(
-                            f"- Unidad {u['numero']}: **{u['nombre']}** "
-                            f"· {u['horas']}h pedagógicas · ponderación: {pct}%"
+                            f"- Unidad {u.get('num', '?')}: **{u.get('nombre', '')}** "
+                            f"· {u.get('horas', '?')}h pedagógicas"
                         )
     else:
-        programa = {}
+        programa = None
 
     # ── Validaciones preventivas ──────────────────────────────────────────
     if xlsx_file:
@@ -1172,10 +1175,13 @@ with tab_i1:
                     f.write(xlsx_file.getvalue())
 
                 if not programa:
-                    pdf_path = os.path.join(tmp, pdf_file.name)
-                    with open(pdf_path, "wb") as f:
-                        f.write(pdf_file.getvalue())
-                    programa = cruce_extraer_pdf(pdf_path)
+                    try:
+                        pdf_path = os.path.join(tmp, pdf_file.name)
+                        with open(pdf_path, "wb") as f:
+                            f.write(pdf_file.getvalue())
+                        programa = cruce_extraer_pdf(pdf_path)
+                    except Exception:
+                        programa = None
 
                 log, ok = rp.procesar_asignatura(
                     carpeta_asig,
@@ -1697,17 +1703,18 @@ def _render_instancia_escala(tab, instancia_num, key_prefix):
             modelo_escala_x  = apa_llm.MODELO_TEXTO
             apikey_escala_x  = ""
 
-        programa_x = {}
+        programa_x = None
         if pdf_x:
             with st.spinner("Leyendo programa..."):
-                with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp_px:
-                    tmp_px.write(pdf_x.read())
-                    tmp_px_path = tmp_px.name
-                programa_x = cruce_extraer_pdf(tmp_px_path)
-                os.unlink(tmp_px_path)
-            if programa_x.get("_error"):
-                st.warning(f"No se pudo leer el PDF: {programa_x['_error']}")
-                programa_x = {}
+                try:
+                    with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp_px:
+                        tmp_px.write(pdf_x.read())
+                        tmp_px_path = tmp_px.name
+                    programa_x = cruce_extraer_pdf(tmp_px_path)
+                    os.unlink(tmp_px_path)
+                except Exception as _epx:
+                    st.warning(f"No se pudo leer el PDF: {str(_epx)[:200]}", icon="⚠️")
+                    programa_x = None
 
         st.markdown(f"### 3 · Aplicar correcciones")
 

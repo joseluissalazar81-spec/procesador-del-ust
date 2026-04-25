@@ -1938,6 +1938,12 @@ try:
 except ImportError:
     RECURSOS_OK = False
 
+try:
+    import extraer_borrador as eb
+    BORRADOR_OK = True
+except ImportError:
+    BORRADOR_OK = False
+
 with tab_recursos:
     st.markdown("### 🎨 Diseño de Recursos Didácticos T1–T4")
 
@@ -2004,6 +2010,46 @@ with tab_recursos:
         help="Sube la planificación procesada (descargada del tab Revisar) "
              "o la planificación original del docente.",
     )
+
+    # ── Material borrador del docente ──────────────────────────────────────
+    with st.expander("📎 Material borrador del docente (opcional)", expanded=False):
+        st.caption(
+            "Sube el material que el/la docente entregó como base de contenido "
+            "(Word, PPT, Excel, PDF, TXT). El modelo de IA lo usará para construir "
+            "el recurso a partir del contenido real de la asignatura."
+        )
+        _borrador_file = st.file_uploader(
+            "Archivo borrador",
+            type=["docx", "pptx", "xlsx", "pdf", "txt", "md"],
+            key="rec_borrador",
+            label_visibility="collapsed",
+        )
+
+    _borrador_texto = ""
+    if _borrador_file:
+        if BORRADOR_OK:
+            with st.spinner("Extrayendo texto del borrador…"):
+                try:
+                    _borrador_texto = eb.extraer_texto(
+                        _borrador_file.getvalue(), _borrador_file.name
+                    )
+                    _borrador_file.seek(0)
+                    if _borrador_texto.startswith("["):
+                        st.warning(_borrador_texto, icon="⚠️")
+                        _borrador_texto = ""
+                    else:
+                        st.success(
+                            f"Borrador extraído — {len(_borrador_texto):,} caracteres "
+                            f"de **{_borrador_file.name}**",
+                            icon="📎",
+                        )
+                except Exception as _eb_err:
+                    st.error(f"No se pudo leer el borrador: {_eb_err}", icon="🔴")
+        else:
+            st.warning(
+                "No se encontró `extraer_borrador.py`. El borrador no se usará.",
+                icon="⚙️",
+            )
 
     _unidades_disp: list[tuple[int, str]] = []
     if _rec_xlsx:
@@ -2171,6 +2217,7 @@ with tab_recursos:
                         backend=_rec_backend,
                         model=_rec_model or None,
                         api_key=_rec_apikey,
+                        borrador_texto=_borrador_texto,
                     )
                     _rec_ext  = "txt"
                     _rec_mime = "text/plain"
@@ -2182,6 +2229,7 @@ with tab_recursos:
                         backend=_rec_backend,
                         model=_rec_model or None,
                         api_key=_rec_apikey,
+                        borrador_texto=_borrador_texto,
                     )
                     _rec_ext  = "txt"
                     _rec_mime = "text/plain"
@@ -2193,6 +2241,7 @@ with tab_recursos:
                         backend=_rec_backend,
                         model=_rec_model or None,
                         api_key=_rec_apikey,
+                        borrador_texto=_borrador_texto,
                     )
                     _rec_ext  = "txt"
                     _rec_mime = "text/plain"
@@ -2205,6 +2254,7 @@ with tab_recursos:
                         backend=_rec_backend,
                         model=_rec_model or None,
                         api_key=_rec_apikey,
+                        borrador_texto=_borrador_texto,
                     )
                     _rec_ext  = "txt"
                     _rec_mime = "text/plain"

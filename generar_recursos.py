@@ -456,6 +456,7 @@ def generar_guion_t1(
     model: str | None = None,
     api_key: str = "",
     timeout: int = 600,
+    borrador_texto: str = "",
 ) -> tuple[str, str | None]:
     """Genera el guión de videoclase. Returns (texto, error)."""
     datos = extraer_datos_planificacion(xlsx_bytes)
@@ -465,14 +466,20 @@ def generar_guion_t1(
         return "", f"Unidad {num_unidad} no encontrada. Disponibles: {sorted(datos['unidades'])}"
 
     contexto = _contexto_unidad(datos, num_unidad)
+    borrador_bloque = (
+        f"\nMATERIAL BORRADOR DEL DOCENTE (usar como base de contenido — no inventar):\n"
+        f"{borrador_texto[:4000]}\n"
+        if borrador_texto.strip() else ""
+    )
     user_msg = f"""\
 Genera el guión completo de una videoclase de EXACTAMENTE {duracion_min} minutos.
 Los tiempos de todas las escenas deben sumar {duracion_min} minutos.
 
 CONTENIDO DE LA PLANIFICACIÓN:
 {contexto}
-
+{borrador_bloque}
 INSTRUCCIONES:
+- Si hay borrador del docente, ese contenido es la BASE — usarlo y estructurarlo, no ignorarlo
 - Cubrir los resultados de aprendizaje indicados
 - Estructurar el desarrollo por los contenidos declarados
 - Las actividades de Preparación pueden mencionarse como punto de partida
@@ -520,18 +527,24 @@ def generar_estructura_t2(
     model: str | None = None,
     api_key: str = "",
     timeout: int = 600,
+    borrador_texto: str = "",
 ) -> tuple[str, str | None]:
     datos = extraer_datos_planificacion(xlsx_bytes)
     if num_unidad not in datos["unidades"]:
         return "", f"Unidad {num_unidad} no encontrada."
     contexto = _contexto_unidad(datos, num_unidad)
+    borrador_bloque = (
+        f"\nMATERIAL BORRADOR DEL DOCENTE (usar como base de contenido):\n{borrador_texto[:4000]}\n"
+        if borrador_texto.strip() else ""
+    )
     user_msg = f"""\
 Genera la estructura completa de un recurso Genially para la siguiente unidad.
 Incluye entre 8 y 14 pantallas. Cada pantalla debe estar lista para diseñar.
+Si hay borrador del docente, ese contenido es la BASE.
 
 CONTENIDO:
 {contexto}
-
+{borrador_bloque}
 Genera la estructura completa ahora.\
 """
     try:
@@ -546,26 +559,49 @@ Genera la estructura completa ahora.\
 
 _SYSTEM_T3 = _CONTEXTO_UST + """
 ROL: Eres un/a diseñador/a instruccional e-learning de la Universidad Santo Tomás.
-TAREA: Generar guías de aprendizaje completas para estudiantes a distancia.
+TAREA: Generar guías de aprendizaje completas siguiendo la plantilla institucional UST.
 
-ESTRUCTURA DE LA GUÍA (obligatoria):
-1. PORTADA: asignatura, unidad, semana(s), RA
-2. PROPÓSITO: para qué sirve esta guía (2-3 oraciones, imperativo al/la estudiante)
-3. ¿QUÉ APRENDERÁS?: lista con viñetas de los aprendizajes esperados
-4. INSTRUCCIONES PASO A PASO — organizadas por los 3 momentos:
-   PREPARACIÓN (antes de la sesión):
-     Propósito: [para qué sirve este momento]
-     1. [actividad numerada en imperativo]
-     2. [actividad numerada en imperativo]
-   DESARROLLO (durante la sesión):
-     Propósito: [para qué sirve este momento]
-     1. [actividad numerada en imperativo]
-   TRABAJO INDEPENDIENTE (después de la sesión):
-     Propósito: [para qué sirve este momento]
-     1. [actividad numerada en imperativo]
-5. RECURSOS DE APOYO: bibliografía en APA 7 (máx. 5, reproducir exactamente)
-6. EVALUACIÓN: reproducir el instrumento evaluativo EXACTAMENTE como en el programa
-7. CIERRE: mensaje motivador
+ESTRUCTURA EXACTA DE LA GUÍA (reproducir este orden y estos títulos):
+
+════════════════════════════════════════
+[TÍTULO DE LA GUÍA]
+Asignatura | Unidad N | Semana(s)
+════════════════════════════════════════
+
+Resultado de aprendizaje
+[Reproducir el RA en infinitivo EXACTAMENTE como figura en el programa]
+
+────────────────────────────────────────
+[Tema 1: nombre específico del bloque]
+────────────────────────────────────────
+[Desarrollo del contenido: explicación clara, ejemplos, tablas si aplica.
+ Si el docente entregó borrador, usar ese contenido como base.]
+
+[Tabla / Figura si corresponde]
+Fuente: [citar en APA 7]
+
+────────────────────────────────────────
+[Tema 2: nombre específico del bloque]  (si hay más temas)
+────────────────────────────────────────
+[Desarrollo]
+
+────────────────────────────────────────
+Recursos complementarios
+────────────────────────────────────────
+Para profundizar en los contenidos trabajados, se sugieren los siguientes recursos:
+• [Recurso 1: tipo (lectura / video / sitio web), título y referencia APA 7 o URL]
+• [Recurso 2: ídem]
+
+────────────────────────────────────────
+Bibliografía
+────────────────────────────────────────
+[Listar todas las fuentes citadas, en APA 7. Reproducir EXACTAMENTE las declaradas en la planificación.]
+
+REGLAS ADICIONALES:
+- Si el docente entregó borrador, ese contenido es la BASE — no inventar contenido nuevo
+- Los recursos bibliográficos declarados en la planificación se reproducen exactamente
+- El instrumento evaluativo (si aplica) se copia EXACTAMENTE del programa
+- Tono: claro, académico, directo al/la estudiante
 """
 
 
@@ -576,19 +612,25 @@ def generar_guia_t3(
     model: str | None = None,
     api_key: str = "",
     timeout: int = 600,
+    borrador_texto: str = "",
 ) -> tuple[str, str | None]:
     datos = extraer_datos_planificacion(xlsx_bytes)
     if num_unidad not in datos["unidades"]:
         return "", f"Unidad {num_unidad} no encontrada."
     contexto = _contexto_unidad(datos, num_unidad)
+    borrador_bloque = (
+        f"\nMATERIAL BORRADOR DEL DOCENTE (esta es la BASE del contenido — estructurar y enriquecer):\n"
+        f"{borrador_texto[:5000]}\n"
+        if borrador_texto.strip() else ""
+    )
     user_msg = f"""\
-Genera la guía de aprendizaje completa para la siguiente unidad.
-Sigue la estructura indicada. Organiza las actividades en los 3 momentos con Propósito en cada uno.
+Genera la guía de aprendizaje completa para la siguiente unidad siguiendo la plantilla institucional UST.
 El instrumento evaluativo debe copiarse EXACTAMENTE del programa, sin modificarlo.
+Si hay borrador del docente, ese contenido es la BASE — no inventar temas ni contenidos nuevos.
 
-CONTENIDO:
+CONTENIDO DE LA PLANIFICACIÓN:
 {contexto}
-
+{borrador_bloque}
 Genera la guía completa ahora.\
 """
     try:
@@ -601,21 +643,154 @@ Genera la guía completa ahora.\
 #  T4 — FORO / QUIZ / TAREA
 # ═════════════════════════════════════════════════════════════════════════════
 
-_SYSTEM_T4 = _CONTEXTO_UST + """
+_SYSTEM_T4_FORO = _CONTEXTO_UST + """
 ROL: Eres un/a diseñador/a instruccional e-learning de la Universidad Santo Tomás.
-TAREA: Generar consignas e instrumentos de evaluación T4.
+TAREA: Generar la consigna de un foro siguiendo la plantilla institucional UST.
 
-TIPOS:
-- FORO: consigna en imperativo + 3 preguntas detonantes numeradas + criterios de participación
-- QUIZ: 8 preguntas opción múltiple (A-D) numeradas + respuestas correctas + retroalimentación breve
-- TAREA: consigna detallada con pasos numerados en imperativo + rúbrica (4 criterios × 4 niveles)
+ESTRUCTURA EXACTA DEL FORO (reproducir este orden y estos títulos):
 
-REGLAS CRÍTICAS:
-- El instrumento evaluativo (rúbrica analítica, pauta de observación, etc.) debe reproducirse
-  EXACTAMENTE como figura en el programa — no inventar ni cambiar el nombre del instrumento.
-- El porcentaje de la evaluación debe coincidir con el declarado en la planificación.
-- La consigna siempre en imperativo dirigido al/la estudiante.
+════════════════════════════════════════
+[NOMBRE DEL FORO según planificación]
+════════════════════════════════════════
+
+Estimado y estimada estudiante,
+
+[CONSIGNA: presentar en 2-4 oraciones el tema, problema o situación que enmarca el foro.
+ Usar el borrador del docente si fue entregado. Tono académico, imperativo.]
+
+Para orientar tu participación, te proponemos las siguientes preguntas:
+
+1. [Pregunta detonante 1 — abierta, conectada al RA]
+2. [Pregunta detonante 2 — que invite a relacionar con la práctica]
+3. [Pregunta detonante 3 — que promueva el debate entre pares]
+
+Recuerda comentar al menos una entrada de tus compañeras y compañeros.
+El intercambio enriquece el aprendizaje colectivo.
+Para publicar tu entrada, haz clic en el botón "Añadir entrada" dentro del foro.
+
+────────────────────────────────────────
+Datos de la actividad
+────────────────────────────────────────
+Nombre del foro: [completar según planificación]
+Tipo de evaluación: [Formativo / Sumativo / Diagnóstico]
+Forma de trabajo: Individual
+Ponderación: [Indicar % si es sumativo, o "Sin ponderación en nota final" si es formativo]
+Interacción mínima: Publicar una entrada y comentar al menos una participación de un/a compañero/a
+Disponibilidad: Las fechas serán informadas por el o la docente
+
+────────────────────────────────────────
+Objetivo de la actividad
+────────────────────────────────────────
+[Redactar en infinitivo. Debe reflejar el RA de la unidad. Ej: "Reflexionar sobre..."]
+
+────────────────────────────────────────
+Instrucciones
+────────────────────────────────────────
+1. Lee con atención la consigna y las preguntas guía antes de redactar tu respuesta.
+2. Redacta tu reflexión de forma personal y fundamentada, incorporando los conceptos trabajados en la unidad.
+3. Publica tu entrada antes de la fecha límite indicada.
+4. Una vez publicada tu entrada, comenta la participación de al menos una compañera o compañero con un aporte sustantivo.
 """
+
+_SYSTEM_T4_TAREA = _CONTEXTO_UST + """
+ROL: Eres un/a diseñador/a instruccional e-learning de la Universidad Santo Tomás.
+TAREA: Generar la consigna de una tarea/trabajo escrito siguiendo la plantilla institucional UST.
+
+ESTRUCTURA EXACTA DE LA TAREA (reproducir este orden y estos títulos):
+
+════════════════════════════════════════
+[NOMBRE DE LA TAREA según planificación]
+════════════════════════════════════════
+
+Estimado y estimada estudiante,
+
+[CONSIGNA: presentar en 2-4 oraciones el tema o problema central de la tarea.
+ Si el docente entregó borrador, usar ese contenido como base.
+ Tono académico, imperativo, claro.]
+
+Para el desarrollo de este trabajo, considera las siguientes instrucciones:
+
+────────────────────────────────────────
+Datos de la actividad
+────────────────────────────────────────
+Nombre de la tarea: [según planificación]
+Tipo de evaluación: [Formativa / Sumativa]
+Forma de trabajo: [Individual / Grupal]
+Ponderación: [% si es sumativa, o "Sin ponderación en nota final" si es formativa]
+Entrega: Buzón de tareas disponible en el aula virtual / Formato PDF o Word
+Disponibilidad: Las fechas serán informadas por el o la docente
+[Si es sumativa — agregar:] Verificación de integridad académica: Turnitin
+
+────────────────────────────────────────
+Objetivo de la actividad
+────────────────────────────────────────
+[Redactar en infinitivo el objetivo alineado al RA de la unidad]
+
+────────────────────────────────────────
+Instrucciones
+────────────────────────────────────────
+1. Lee con atención el enunciado completo antes de comenzar a desarrollar tu trabajo.
+2. Desarrolla tu trabajo de forma [personal / grupal], con argumentos fundamentados en los contenidos de la unidad.
+3. Cuida la redacción, la ortografía y la coherencia de tu texto.
+4. Guarda tu archivo con el siguiente nombre: Apellido_Nombre_[Nombre de la tarea].pdf
+5. Sube tu trabajo al buzón de tareas disponible en el aula virtual, antes de la fecha y hora límite indicada.
+6. Revisa la retroalimentación entregada por el o la docente una vez que esta esté disponible.
+
+[Si el docente entregó preguntas o indicaciones específicas, incluirlas aquí en formato numerado]
+
+────────────────────────────────────────
+[RÚBRICA / INSTRUMENTO DE EVALUACIÓN]
+────────────────────────────────────────
+[Reproducir EXACTAMENTE el instrumento declarado en el programa — no cambiar su nombre.
+ Si es rúbrica analítica: tabla con 4 criterios × 4 niveles (Logrado / Medianamente logrado / En desarrollo / No logrado).
+ Si es pauta: listar los indicadores con su puntaje.]
+"""
+
+_SYSTEM_T4_QUIZ = _CONTEXTO_UST + """
+ROL: Eres un/a diseñador/a instruccional e-learning de la Universidad Santo Tomás.
+TAREA: Generar un quiz/cuestionario de autoevaluación siguiendo la plantilla institucional UST.
+
+ESTRUCTURA EXACTA DEL QUIZ:
+
+════════════════════════════════════════
+[NOMBRE DEL QUIZ según planificación]
+════════════════════════════════════════
+
+Estimado y estimada estudiante,
+Este cuestionario te permitirá verificar tu comprensión de los contenidos de [tema/unidad].
+La retroalimentación es automática al enviar tus respuestas.
+
+────────────────────────────────────────
+Datos de la actividad
+────────────────────────────────────────
+Tipo de evaluación: Formativa (autoevaluación)
+Forma de trabajo: Individual
+Intentos: [1 / ilimitados]
+Disponibilidad: Las fechas serán informadas por el o la docente
+
+────────────────────────────────────────
+Preguntas
+────────────────────────────────────────
+[Generar 8 preguntas de opción múltiple con 4 alternativas (A-D) cada una]
+
+Para cada pregunta incluir:
+  Pregunta N: [enunciado claro, conectado al RA]
+  A) [alternativa]
+  B) [alternativa]
+  C) [alternativa — puede ser "Todas las anteriores" si aplica]
+  D) [alternativa]
+  ✅ Respuesta correcta: [letra]
+  Retroalimentación: [1-2 oraciones que expliquen por qué esa es la correcta]
+
+REGLAS PARA LAS PREGUNTAS:
+- Distribuir entre niveles: recordar (2), comprender (3), aplicar (3)
+- No usar "Todas las anteriores" más de una vez
+- Las alternativas incorrectas deben ser plausibles (no absurdas)
+- Basarse en el contenido declarado en la planificación
+"""
+
+# Mantener _SYSTEM_T4 como alias para compatibilidad
+_SYSTEM_T4 = _SYSTEM_T4_TAREA
 
 
 def generar_consigna_t4(
@@ -626,39 +801,42 @@ def generar_consigna_t4(
     model: str | None = None,
     api_key: str = "",
     timeout: int = 600,
+    borrador_texto: str = "",
 ) -> tuple[str, str | None]:
     datos = extraer_datos_planificacion(xlsx_bytes)
     if num_unidad not in datos["unidades"]:
         return "", f"Unidad {num_unidad} no encontrada."
 
-    u = datos["unidades"][num_unidad]
     contexto = _contexto_unidad(datos, num_unidad)
+    borrador_bloque = (
+        f"\nMATERIAL BORRADOR DEL DOCENTE (usar como base — no ignorar):\n{borrador_texto[:4000]}\n"
+        if borrador_texto.strip() else ""
+    )
 
+    # Seleccionar prompt y nombre según tipo
+    system_map = {
+        "foro":  _SYSTEM_T4_FORO,
+        "quiz":  _SYSTEM_T4_QUIZ,
+        "tarea": _SYSTEM_T4_TAREA,
+    }
     tipo_nombre = {
         "foro":  "Foro de participación",
         "quiz":  "Quiz de autoevaluación",
         "tarea": "Tarea / producción del estudiante",
     }.get(tipo_t4, "Tarea")
-
-    instrucciones_tipo = {
-        "foro":  "Incluye: consigna principal + 3 preguntas detonantes numeradas + criterios de participación (frecuencia, extensión, calidad).",
-        "quiz":  "Incluye: 8 preguntas de opción múltiple (A-D) numeradas + respuesta correcta marcada + retroalimentación breve (1 línea) por cada opción incorrecta.",
-        "tarea": "Incluye: consigna con contexto + pasos numerados en imperativo + rúbrica analítica con 4 criterios y 4 niveles (Logrado/Medianamente logrado/En desarrollo/No logrado).",
-    }.get(tipo_t4, "")
+    system = system_map.get(tipo_t4, _SYSTEM_T4_TAREA)
 
     user_msg = f"""\
-Genera una {tipo_nombre} completa para la siguiente unidad.
-{instrucciones_tipo}
-
+Genera {tipo_nombre} completa para la siguiente unidad siguiendo la plantilla institucional UST.
 El instrumento evaluativo debe copiarse EXACTAMENTE como figura en la planificación.
-El porcentaje debe coincidir con el declarado.
+Si hay borrador del docente, ese contenido es la BASE — úsalo, no lo ignores.
 
-CONTENIDO:
+CONTENIDO DE LA PLANIFICACIÓN:
 {contexto}
-
+{borrador_bloque}
 Genera el recurso completo ahora.\
 """
     try:
-        return _llamar_llm(_SYSTEM_T4, user_msg, backend, model, api_key, timeout, 3000), None
+        return _llamar_llm(system, user_msg, backend, model, api_key, timeout, 3000), None
     except Exception as e:
         return "", str(e)

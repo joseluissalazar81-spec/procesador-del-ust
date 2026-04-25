@@ -1918,21 +1918,105 @@ def detectar_unidades_grupales(ws):
 # ══════════════════════════════════════════════════════════════════════════
 
 def corregir_sintesis(ws, log, registro=None):
-    """Elimina DIAGNÓSTICA y FORMATIVA de procedimientos de evaluación."""
+    """
+    Correcciones en Síntesis didáctica:
+    1. Elimina DIAGNÓSTICA y FORMATIVA de col D (procedimientos).
+    2. Normaliza porcentajes en col G a número entero (30% / 0.30 → 30).
+    3. Colorea filas de la tabla RA/Procedimientos:
+       - Sumativa → amarillo pastel
+       - Formativa / Diagnóstica → lila pastel
+    """
+    from openpyxl.cell.cell import MergedCell
+
     cambios = 0
-    for row in ws.iter_rows(min_row=1, values_only=False):
+
+    # ── Detectar rango de la tabla RA ─────────────────────────────────────
+    # Buscar la fila del encabezado "Resultados de Aprendizaje" (col A)
+    fila_header_ra = None
+    fila_total_ra  = None
+    for row in ws.iter_rows(min_row=1, max_row=ws.max_row, values_only=False):
         for cell in row:
+            if (cell.column == 1 and cell.value and
+                    isinstance(cell.value, str) and
+                    'resultado' in cell.value.lower() and
+                    'aprendizaje' in cell.value.lower()):
+                fila_header_ra = cell.row
+            if (cell.column == 6 and cell.value and
+                    isinstance(cell.value, str) and
+                    cell.value.strip().upper() == 'TOTAL' and
+                    fila_header_ra and cell.row > fila_header_ra):
+                fila_total_ra = cell.row
+                break
+        if fila_total_ra:
+            break
+
+    COL_MAX_COLOR = 7   # A–G
+
+    # ── 1 & 2 & 3: iterar filas de datos ─────────────────────────────────
+    for row in ws.iter_rows(min_row=1, values_only=False):
+        r = row[0].row
+
+        for cell in row:
+            # Corrección 1: eliminar DIAGNÓSTICA/FORMATIVA en col D
             if cell.column == 4 and cell.value and isinstance(cell.value, str):
                 if tiene_bloques_extra(cell.value):
                     original = cell.value
                     nuevo = solo_sumativa(cell.value)
-                    log.append(f'    [Síntesis F{cell.row}] Eliminados bloques DIAGNÓSTICA/FORMATIVA')
+                    log.append(f'    [Síntesis F{r}] Eliminados bloques DIAGNÓSTICA/FORMATIVA')
                     cell.value = nuevo
                     aplicar_azul_diff(cell, original, nuevo)
                     _reg(registro, ws, cell,
                          'Síntesis: eliminar DIAGNÓSTICA/FORMATIVA de procedimientos',
                          original, nuevo)
                     cambios += 1
+
+            # Corrección 2: normalizar porcentajes en col G a número entero
+            if cell.column == 7 and cell.value is not None:
+                val = cell.value
+                num = None
+                if isinstance(val, str):
+                    val_s = val.strip().rstrip('%')
+                    try:
+                        num = float(val_s)
+                        if num <= 1.0:   # era decimal 0.30 → 30
+                            num = round(num * 100)
+                        else:
+                            num = round(num)
+                    except ValueError:
+                        pass
+                elif isinstance(val, float):
+                    if val <= 1.0:
+                        num = round(val * 100)
+                    else:
+                        num = round(val)
+                elif isinstance(val, int):
+                    num = val
+
+                if num is not None and cell.value != num:
+                    original_pct = cell.value
+                    cell.value = num
+                    aplicar_azul_diff(cell, str(original_pct), str(num))
+                    log.append(f'    [Síntesis F{r}] Porcentaje normalizado: {original_pct!r} → {num}')
+                    cambios += 1
+
+        # Corrección 3: colorear filas de la tabla RA
+        if fila_header_ra and fila_total_ra:
+            if fila_header_ra < r < fila_total_ra:
+                proc_val = ws.cell(r, 4).value
+                if proc_val and isinstance(proc_val, str):
+                    pt = proc_val.lower()
+                    if 'sumativ' in pt:
+                        fill = _FILL_SUMATIVA
+                    elif 'formativ' in pt or 'diagnóst' in pt or 'diagnost' in pt:
+                        fill = _FILL_FORMATIVA
+                    else:
+                        fill = None
+                    if fill:
+                        for col_idx in range(1, COL_MAX_COLOR + 1):
+                            c = ws.cell(r, col_idx)
+                            if not isinstance(c, MergedCell):
+                                c.fill = fill
+
     return cambios
 
 
@@ -2319,6 +2403,11 @@ _PAT_INICIO_NO_IMPERATIVO = re.compile(
     r'teniendo\s+en\s+cuenta|tomando\s+en\s+cuenta|'
     r'considerando\s+(?:que\s+)?|teniendo\s+presente|'
     r'de\s+acuerdo\s+(?:a|con)|'
+    # Frases de modalidad grupal que preceden al verbo
+    r'en\s+equipo[s]?\s*,|en\s+grupo[s]?\s*,|'
+    r'de\s+manera\s+(?:grupal|individual|colaborativa)\s*,|'
+    r'de\s+forma\s+(?:grupal|individual|colaborativa)\s*,|'
+    r'junto\s+(?:a|con)\s+tu[s]?\s+\w+\s*,|'
     # Conectores textuales
     r'luego\s+de|despu[eé]s\s+de|una\s+vez\s+que|'
     r'con\s+el\s+fin\s+de|con\s+el\s+objetivo\s+de|'
@@ -2331,6 +2420,16 @@ _PAT_INICIO_NO_IMPERATIVO = re.compile(
     r'reflexi[oó]n\s+sobre|an[aá]lisis\s+de|revisi[oó]n\s+de|'
     r'lectura\s+de|elaboraci[oó]n\s+de|redacci[oó]n\s+de'
     r')',
+    re.IGNORECASE,
+)
+
+# Patrón para reordenar "En equipos, verbo..." → "Verbo... en equipos..."
+_PAT_MODALIDAD_PREFIJA = re.compile(
+    r'^(\d+\.\s+)?'
+    r'(en\s+equipo[s]?|en\s+grupo[s]?|'
+    r'de\s+manera\s+(?:grupal|individual|colaborativa)|'
+    r'de\s+forma\s+(?:grupal|individual|colaborativa))'
+    r'\s*,\s*(.+)',
     re.IGNORECASE,
 )
 
@@ -2664,6 +2763,30 @@ def corregir_lenguaje_actividades(ws, log, registro=None):
             return m.group(0)
 
         t2 = re.sub(r'(\d+)\.\s+([A-ZÁÉÍÓÚ][a-záéíóúü]+)\b', _plural_a_singular, texto_nuevo)
+        if t2 != texto_nuevo:
+            texto_nuevo = t2
+
+        # ── 3a2. Reordenar "En equipos, verbo..." → "Verbo... en equipos" ──
+        def _reordenar_modalidad(linea: str) -> str:
+            m = _PAT_MODALIDAD_PREFIJA.match(linea)
+            if not m:
+                return linea
+            num_part  = m.group(1) or ''   # "2. " o ""
+            modalidad = m.group(2).lower() # "en equipos"
+            resto     = m.group(3).strip() # "analiza un caso..."
+            if not resto:
+                return linea
+            # Capitalizar primera letra del resto
+            resto_cap = resto[0].upper() + resto[1:]
+            cambios_celda.append(
+                f'reordenar inicio: "{num_part}{modalidad}, {resto[:40]}…"'
+                f' → "{num_part}{resto_cap}, {modalidad}"'
+            )
+            return f'{num_part}{resto_cap}, {modalidad}'
+
+        lineas_orig2 = texto_nuevo.split('\n')
+        lineas_new2  = [_reordenar_modalidad(l) for l in lineas_orig2]
+        t2 = '\n'.join(lineas_new2)
         if t2 != texto_nuevo:
             texto_nuevo = t2
 

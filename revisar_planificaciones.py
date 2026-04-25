@@ -1893,7 +1893,11 @@ def detectar_unidades_grupales(ws):
 # ══════════════════════════════════════════════════════════════════════════
 
 def corregir_sintesis(ws, log, registro=None):
-    """Elimina DIAGNÓSTICA y FORMATIVA de procedimientos de evaluación."""
+    """
+    Elimina DIAGNÓSTICA y FORMATIVA de procedimientos de evaluación.
+    Solo marca en azul el texto que cambia efectivamente; el contenido
+    que ya estaba (ej. 'SUMATIVA') conserva su color original.
+    """
     cambios = 0
     for row in ws.iter_rows(min_row=1, values_only=False):
         for cell in row:
@@ -1903,11 +1907,50 @@ def corregir_sintesis(ws, log, registro=None):
                     nuevo = solo_sumativa(cell.value)
                     log.append(f'    [Síntesis F{cell.row}] Eliminados bloques DIAGNÓSTICA/FORMATIVA')
                     cell.value = nuevo
-                    aplicar_azul(cell)
+                    # Diff-based: solo las líneas realmente nuevas quedan en azul.
+                    # Las líneas que ya estaban (ej. SUMATIVA) conservan color original.
+                    aplicar_azul_diff(cell, original, nuevo)
                     _reg(registro, ws, cell,
                          'Síntesis: eliminar DIAGNÓSTICA/FORMATIVA de procedimientos',
                          original, nuevo)
                     cambios += 1
+
+    # ── Validar sección "Nombre de la evaluación" / "Complemento integridad académica" ──
+    # Busca la fila con este encabezado y verifica que las celdas de datos no estén vacías
+    nombre_eval_fila = None
+    for row in ws.iter_rows(min_row=1, max_row=ws.max_row, values_only=False):
+        for cell in row:
+            if (cell.column == 1 and cell.value and
+                    isinstance(cell.value, str) and
+                    'nombre de la evaluaci' in cell.value.lower()):
+                nombre_eval_fila = cell.row
+                break
+        if nombre_eval_fila:
+            break
+
+    if nombre_eval_fila:
+        filas_vacias_nombre = []
+        filas_vacias_compl  = []
+        for fila in range(nombre_eval_fila + 1, min(nombre_eval_fila + 10, ws.max_row + 1)):
+            v_col_a = ws.cell(fila, 1).value
+            v_col_d = ws.cell(fila, 4).value
+            if v_col_a is None and v_col_d is None:
+                break  # fin de la tabla
+            if v_col_a is None:
+                filas_vacias_nombre.append(fila)
+            if v_col_d is None:
+                filas_vacias_compl.append(fila)
+        if filas_vacias_nombre:
+            log.append(
+                f'    [Síntesis] ⚠️ "Nombre de la evaluación" vacío en '
+                f'fila(s) {filas_vacias_nombre}. Completar según programa oficial.'
+            )
+        if filas_vacias_compl:
+            log.append(
+                f'    [Síntesis] ⚠️ "Complemento integridad académica" vacío en '
+                f'fila(s) {filas_vacias_compl}. Indicar Turnitin o Klarway según programa.'
+            )
+
     return cambios
 
 
@@ -1975,7 +2018,7 @@ def corregir_planificacion(ws, log, registro=None):
             nuevo_tipo = TIPO_MAP[tipo]
             log.append(f'    [Plan F{r}] Tipo: "{tipo}" → "{nuevo_tipo}"')
             tipo_cell.value = nuevo_tipo
-            aplicar_azul(tipo_cell)
+            aplicar_azul_diff(tipo_cell, str(tipo), nuevo_tipo)
             _reg(registro, ws, tipo_cell, 'Normalizar tipo de evaluación', tipo, nuevo_tipo)
             tipo = nuevo_tipo
             cambios_alta += 1
@@ -1992,7 +2035,7 @@ def corregir_planificacion(ws, log, registro=None):
             nuevo_proc = PROC_MAP[proc]
             log.append(f'    [Plan F{r}] Procedimiento: "{proc}" → "{nuevo_proc}"')
             proc_cell.value = nuevo_proc
-            aplicar_azul(proc_cell)
+            aplicar_azul_diff(proc_cell, str(proc), nuevo_proc)
             _reg(registro, ws, proc_cell, 'Normalizar procedimiento de evaluación', proc, nuevo_proc)
             proc = nuevo_proc
             cambios_alta += 1
@@ -2003,14 +2046,14 @@ def corregir_planificacion(ws, log, registro=None):
         if instr == 'Pauta':
             log.append(f'    [Plan F{r}] Instrumento: "Pauta" → "Pauta de observación"')
             instr_cell.value = 'Pauta de observación'
-            aplicar_azul(instr_cell)
+            aplicar_azul_diff(instr_cell, 'Pauta', 'Pauta de observación')
             _reg(registro, ws, instr_cell, 'Normalizar instrumento de evaluación', instr, 'Pauta de observación')
             instr = 'Pauta de observación'
             cambios_alta += 1
         elif instr == 'Rúbrica' and proc in PROC_INSTR_RÚBRICA_CONTEXTOS:
             log.append(f'    [Plan F{r}] Instrumento: "Rúbrica" → "Pauta de observación" (proc={proc})')
             instr_cell.value = 'Pauta de observación'
-            aplicar_azul(instr_cell)
+            aplicar_azul_diff(instr_cell, 'Rúbrica', 'Pauta de observación')
             _reg(registro, ws, instr_cell, 'Normalizar instrumento (Rúbrica→Pauta en Producciones)', instr, 'Pauta de observación')
             instr = 'Pauta de observación'
             cambios_alta += 1
@@ -2020,7 +2063,7 @@ def corregir_planificacion(ws, log, registro=None):
             nuevo_medio = inferir_medio(modalidad, momento, tipo)
             if nuevo_medio:
                 medio_cell.value = nuevo_medio
-                aplicar_azul(medio_cell)
+                aplicar_azul_diff(medio_cell, '', nuevo_medio)
                 log.append(f'    [Plan F{r}] Medio de entrega: None → "{nuevo_medio}"')
                 _reg(registro, ws, medio_cell, 'Inferir medio de entrega', None, nuevo_medio)
                 cambios_media_j += 1
@@ -2030,7 +2073,7 @@ def corregir_planificacion(ws, log, registro=None):
             es_grupal = unidad_actual in unidades_grupales
             nuevo_indiv = inferir_indiv_grupal(proc, es_grupal)
             indiv_cell.value = nuevo_indiv
-            aplicar_azul(indiv_cell)
+            aplicar_azul_diff(indiv_cell, '', nuevo_indiv)
             log.append(f'    [Plan F{r}] Individual/Grupal: None → "{nuevo_indiv}"')
             _reg(registro, ws, indiv_cell, 'Inferir modalidad individual/grupal', None, nuevo_indiv)
             cambios_media_m += 1
@@ -2038,7 +2081,7 @@ def corregir_planificacion(ws, log, registro=None):
         # ── BAJA: % = None → 0 ────────────────────────────────────────────
         if pct_cell.value is None:
             pct_cell.value = 0
-            aplicar_azul(pct_cell)
+            aplicar_azul_diff(pct_cell, '', '0')
             log.append(f'    [Plan F{r}] %: None → 0')
             _reg(registro, ws, pct_cell, '% vacío → 0', None, 0)
             cambios_baja += 1
@@ -2257,30 +2300,39 @@ def _analizar_coherencia_bloque(titulo, proposito_texto, items, momento_col,
 # Fuente base + Manual Diseño Instruccional UST (Res. N°481/24), Tabla 1 (p.19)
 _VERBOS_IMPERATIVO = {
     # A
-    'accede','activa','adapta','agrega','amplía','analiza','anota','aplica',
-    'argumenta','asiste','atiende','ayuda',
+    'accede','activa','adapta','administra','agrega','agrupa','ajusta','amplía',
+    'analiza','anota','aplica','argumenta','asigna','asiste','atiende','actualiza',
+    'ayuda',
     # B-C
     'busca','calcula','categoriza','clasifica','colabora','comenta','compara',
-    'comparte','completa','comprende','conecta','construye','consulta','contesta',
-    'contrasta','contribuye','coopera','corrige','crea','cuestiona',
+    'comparte','completa','comprende','comunica','conecta','construye','consulta',
+    'contesta','contrasta','contribuye','convierte','coopera','coordina','corrige',
+    'crea','cuestiona',
     # D-E
-    'debate','deduce','define','describe','desarrolla','destaca','determina',
-    'diferencia','diseña','documenta','elabora','emplea','enumera','escribe',
-    'escucha','esquematiza','evalúa','examina','explica','explora','expone',
-    # F-I
-    'familiarízate','formula','grafica','identifica','implementa','infiere',
-    'ingresa','interpreta','investiga',
+    'debate','deduce','define','describe','desarrolla','despliega','destaca',
+    'detecta','determina','detalla','diagnostica','diferencia','diseña','distribuye',
+    'documenta','edita','efectúa','ejecuta','elabora','emplea','encuentra','enumera',
+    'escribe','escucha','esquematiza','estructura','evalúa','examina','exhibe',
+    'explica','explora','expone','extrae',
+    # F-G
+    'familiarízate','filtra','formula','genera','gestiona','grafica',
+    # I
+    'identifica','ilustra','implementa','infiere','informa','ingresa','interpreta',
+    'investiga',
     # J-M
-    'justifica','lee','lista','localiza','mapea','marca','mide','moviliza',
-    # N-P
-    'nota','observa','optimiza','organiza','participa','planifica','practica',
-    'prepara','presenta','prioriza','profundiza','propone','publica',
+    'justifica','lee','lista','lleva','localiza','mapea','marca','mejora','mide',
+    'modifica','moviliza','muestra',
+    # O-P
+    'obtén','observa','opera','optimiza','ordena','organiza','participa','planifica',
+    'planifica','practica','prepara','presenta','prioriza','profundiza','programa',
+    'proyecta','propone','publica',
     # R
-    'realiza','recibe','recuerda','recoge','redacta','reflexiona','registra',
-    'relaciona','repasa','responde','retoma','revisa','resume',
+    'realiza','recibe','recuerda','recoge','recupera','redacta','reflexiona',
+    'registra','relaciona','renderiza','repasa','representa','reporta','responde',
+    'retoma','revisa','resume',
     # S-Z
     'selecciona','señala','sintetiza','sistematiza','socializa','soluciona',
-    'subraya','sube','tabula','toma','trabaja','ubica','usa','utiliza',
+    'subraya','sube','tabula','toma','transforma','trabaja','ubica','usa','utiliza',
     'valida','valora','verifica','visualiza',
 }
 

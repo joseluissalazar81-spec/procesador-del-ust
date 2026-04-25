@@ -4,11 +4,31 @@ Verifica el .xlsx antes de procesarlo para detectar problemas estructurales.
 """
 
 from __future__ import annotations
+import unicodedata
 import openpyxl
 from io import BytesIO
 
 # Hojas requeridas
 HOJAS_REQUERIDAS = ["Síntesis didáctica", "Planificación por unidades"]
+
+
+def _normalizar(s: str) -> str:
+    """Minúsculas + quitar tildes + colapsar espacios."""
+    s = unicodedata.normalize("NFD", s)
+    s = "".join(c for c in s if unicodedata.category(c) != "Mn")
+    return " ".join(s.lower().split())
+
+
+def _buscar_hoja(wb, nombre_esperado: str) -> str | None:
+    """
+    Busca una hoja por nombre tolerando tildes, mayúsculas y espacios extra.
+    Devuelve el nombre real que tiene el workbook, o None si no existe.
+    """
+    norm = _normalizar(nombre_esperado)
+    for sname in wb.sheetnames:
+        if _normalizar(sname) == norm:
+            return sname
+    return None
 
 # Cabeceras esperadas en fila 3 de "Planificación por unidades" (col 1-15)
 # None = no se valida esa columna
@@ -72,17 +92,25 @@ def validar_xlsx(fuente) -> list[dict]:
 
     hojas = wb.sheetnames
 
-    # ── 2. Hojas requeridas ────────────────────────────────────────────────
+    # ── 2. Hojas requeridas (tolerante a tildes/mayúsculas) ───────────────
+    _mapa_hojas: dict[str, str] = {}   # nombre_canónico → nombre_real_en_wb
     for hoja in HOJAS_REQUERIDAS:
-        if hoja not in hojas:
+        nombre_real = _buscar_hoja(wb, hoja)
+        if nombre_real is None:
             problema("error", "HOJA_FALTANTE",
                      f"Falta la hoja obligatoria: «{hoja}»")
+        else:
+            _mapa_hojas[hoja] = nombre_real
 
     if any(p["codigo"] == "HOJA_FALTANTE" for p in problemas):
         return problemas  # sin hojas no tiene sentido continuar
 
+    # Accesos normalizados (usa el nombre real aunque tenga variación de tildes)
+    _sint_key = _mapa_hojas.get("Síntesis didáctica", "Síntesis didáctica")
+    _plan_key = _mapa_hojas.get("Planificación por unidades", "Planificación por unidades")
+
     # ── 3. Síntesis didáctica — celdas clave no vacías ────────────────────
-    ws_sint = wb["Síntesis didáctica"]
+    ws_sint = wb[_sint_key]
     _check_sint = [
         (7, 1, "Nombre de la asignatura"),
         (4, 4, "Código de asignatura"),
@@ -100,7 +128,7 @@ def validar_xlsx(fuente) -> list[dict]:
                      f"(fila {fila}, col {col})")
 
     # ── 4. Planificación por unidades — cabeceras ─────────────────────────
-    ws_plan = wb["Planificación por unidades"]
+    ws_plan = wb[_plan_key]
 
     # Leer fila 3 como cabeceras
     fila_cabeceras = {}

@@ -20,14 +20,24 @@ import dict_ust
 import apa_recursos as apa
 import apa_llm
 
-# ── Módulos DEL avanzados (escala + reescritura) ──────────────────────────────
+# ── Cruce con programa (independiente del resto de módulos avanzados) ─────────
 try:
-    from agente_criterios import evaluar_45_criterios, reporte_escala, CRITERIOS
-    from calculos_del import validar_horas_y_recursos, reporte_texto as calculos_reporte
     from cruce_programa import (
         extraer_programa_pdf as cruce_extraer_pdf,
         cruzar_con_planificacion,
     )
+    CRUCE_OK = True
+except ImportError:
+    CRUCE_OK = False
+    def cruce_extraer_pdf(*a, **kw):
+        return {"_error": "Módulo cruce_programa no disponible"}
+    def cruzar_con_planificacion(*a, **kw):
+        return [], []
+
+# ── Módulos DEL avanzados (escala + reescritura) ──────────────────────────────
+try:
+    from agente_criterios import evaluar_45_criterios, reporte_escala, CRITERIOS
+    from calculos_del import validar_horas_y_recursos, reporte_texto as calculos_reporte
     from reescritura_llm import reescribir_planificacion
     ESCALA_OK = True
 except ImportError as _ei:
